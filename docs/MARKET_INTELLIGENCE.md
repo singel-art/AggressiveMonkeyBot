@@ -10,10 +10,15 @@ Code dans `src/market_intelligence/`, script MetaTrader dans `mt5/Scripts/`, tes
 ## Démarrage
 
 ```bash
-pip install -e .
+pip install -r requirements.txt
 ```
 
-Cette commande installe le paquet `market_intelligence` depuis `src/` et sa dépendance `requests`.
+```bash
+pip install --no-deps -e .
+```
+
+La première commande installe les versions exactes testées, la seconde le paquet `market_intelligence`
+depuis `src/`. Python 3.11 ou plus récent.
 
 ```bash
 python -m market_intelligence audit
@@ -42,7 +47,7 @@ python -m market_intelligence context --asof 2025-12-10T18:45:00Z --print-only
 Lancer les tests :
 
 ```bash
-pip install -e ".[dev]"
+pip install -r requirements-dev.txt
 ```
 
 ```bash
@@ -52,6 +57,7 @@ python -m pytest -q
 ## Documentation
 
 - `MONKEY_ENVIRONMENT.md` : règles du projet.
+- `docs/MT5_CALENDAR.md` : compilation, export et validation du calendrier MT5.
 - `docs/SOURCES.md` : audit des sources, accès, coûts et limites.
 - `docs/API_KEYS.md` : clés et comptes, et où les placer.
 - `docs/ARCHITECTURE.md` : organisation, modèle de données, prévention du look-ahead, fichiers produits
@@ -61,11 +67,14 @@ python -m pytest -q
 
 | Élément | État |
 | --- | --- |
-| Connecteurs FRED / ALFRED, Fed, BLS, CFTC | Testés sur les sources réelles le 12 novembre 2026 |
-| Stockage point-in-time et requêtes « tel que connu à » | Testé sur de vraies révisions |
+| Connecteurs FRED / ALFRED, Fed, CFTC | Testés sur les sources réelles le 12 novembre 2026, avant et après la fiabilisation |
+| Connecteur BLS | Sans clé : a fonctionné puis quota journalier atteint. Avec clé : testé hors réseau seulement |
+| Stockage point-in-time : publications initiales, révisions, borne sûre | Testé sur de vraies révisions, avec des tests anti-look-ahead dédiés |
 | Génération du contexte, en direct et à une date passée | Testée |
 | World Gold Council | Archivage des fichiers déposés à la main. Lecture des colonnes à écrire sur un vrai fichier |
-| Calendrier MT5 (script MQL5 et import) | Écrit, non compilé et non testé : MetaTrader n'est pas disponible dans l'environnement cloud |
+| Calendrier MT5 : script MQL5 | Écrit, jamais compilé ni exécuté : MetaTrader n'est pas disponible dans l'environnement cloud |
+| Calendrier MT5 : lecteur Python | Testé sur le format, jamais sur un export réel |
+| Biais macro | Calculé et marqué « non validé ». Ne doit peser dans aucune décision de trading |
 | Lecture du contexte par l'Expert Advisor | À écrire avec l'EA. Le format des fichiers est fixé |
 
 Le dossier `data/` (base SQLite, réponses brutes archivées, contexte) n'est pas versionné. Il se

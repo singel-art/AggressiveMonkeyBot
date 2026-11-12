@@ -12,7 +12,15 @@ Aucune clé ne doit apparaître dans le code, dans un fichier du projet ou dans 
 | Trading Economics | Non intégré | Abonnement payant | Calendrier avec prévisions | Sans objet |
 | CME Group | Non intégré | Offres payantes | Probabilités FedWatch | Sans objet |
 
-Le chemin de code qui envoie `BLS_API_KEY` n'a pas pu être testé, faute de clé.
+Aucune requête réelle n'a été faite avec une clé BLS valide : aucune n'est disponible. Le chemin avec clé est
+couvert par des tests hors réseau (clé envoyée dans le corps de la requête, jamais dans l'URL ; refus pour clé
+invalide ou quota ; clé masquée dans les messages et dans l'archive). La réponse réelle du BLS à une clé
+invalide a été enregistrée pour ces tests.
+
+## Fichier `.env`
+
+Copier `.env.example` sous le nom `.env` à la racine du dépôt et y placer les valeurs. Ce fichier est exclu
+du dépôt. Les variables d'environnement du système priment sur lui.
 
 ## Définir une variable d'environnement
 
@@ -33,4 +41,6 @@ export BLS_API_KEY="votre_cle"
 - `src/market_intelligence/config.py` lit les clés dans l'environnement, jamais dans un fichier du projet.
 - Le journal des collectes et les noms de fichiers archivés sont expurgés des paramètres secrets
   (`api_key`, `registrationkey`, `token`...). Un test vérifie ce point.
-- `.gitignore` exclut `data/` et `.env`.
+- `.gitignore` exclut `data/`, `.env` et les fichiers de clés.
+- Le BLS recopie la clé dans certaines réponses d'erreur : elle est masquée avant tout affichage et avant
+  l'archivage de la réponse.

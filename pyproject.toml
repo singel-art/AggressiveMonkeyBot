@@ -6,14 +6,15 @@ build-backend = "setuptools.build_meta"
 name = "aggressive-monkey-bot-market-intelligence"
 version = "0.1.0"
 description = "Collecte, stockage point-in-time et contexte macro pour AggressiveMonkeyBot"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
+# Bornes compatibles. Les versions exactes testees sont figees dans requirements.txt.
 dependencies = [
-    "requests>=2.31",
-    "tzdata>=2024.1; platform_system == 'Windows'",
+    "requests>=2.34,<3",
+    "tzdata>=2026.1; platform_system == 'Windows'",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=9.2,<10"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

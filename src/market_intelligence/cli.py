@@ -18,17 +18,15 @@ from .config import load_settings
 from .connectors import CONNECTORS
 from .connectors.base import CheckResult, CollectReport
 from .context import build_context, write_context
-from .errors import SourceUnavailable
 from .http import HttpClient
 from .store import SchemaMismatch, Store
 from .timeutil import iso, now_utc, parse_iso
 
-# Sources etudiees mais sans connecteur : l'audit en garde la preuve.
-EXTRA_CHECKS = {
-    "tradingeconomics": ("https://api.tradingeconomics.com/calendar", {"c": "guest:guest", "f": "json"},
-                         "API payante : l'acces invite a ete supprime"),
-    "cme": ("https://www.cmegroup.com/markets/interest-rates/cme-fedwatch-tool.html", None,
-            "collecte automatique interdite par les conditions d'utilisation du site"),
+# Sources etudiees le 2026-11-12 et ecartees. L'audit ne les interroge plus : l'une est
+# payante, l'autre interdit la collecte automatique. Le constat d'origine est dans docs/SOURCES.md.
+NOT_QUERIED = {
+    "tradingeconomics": "non interroge : API payante, acces invite supprime (HTTP 410 constate le 2026-11-12)",
+    "cme": "non interroge : collecte automatique interdite par les conditions d'utilisation du site",
 }
 
 
@@ -44,15 +42,12 @@ def cmd_audit(args) -> int:
     results: list[CheckResult] = []
     for name, cls in CONNECTORS.items():
         results.append(cls(http, store, settings).check())
-    for name, (url, params, verdict) in EXTRA_CHECKS.items():
-        try:
-            http.get(name, url, params=params, ext="txt")
-            results.append(CheckResult(name, True, "a repondu, a reexaminer : " + verdict))
-        except SourceUnavailable as exc:
-            results.append(CheckResult(name, False, f"{exc.reason} ; {verdict}", needs_key=True))
     for r in results:
         print(f"{'OK ' if r.ok else 'KO '} {r.source:<17} {r.detail}")
-    report = {"audited_at": iso(now_utc()), "results": [r.__dict__ for r in results]}
+    for name, reason in NOT_QUERIED.items():
+        print(f"--  {name:<17} {reason}")
+    report = {"audited_at": iso(now_utc()), "results": [r.__dict__ for r in results],
+              "not_queried": NOT_QUERIED}
     path = settings.data_dir / f"audit_{date.today().isoformat()}.json"
     path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\nRapport ecrit : {path}")

@@ -35,56 +35,106 @@ est absent ou périmé, il applique sa règle de prudence et continue de gérer 
 | `src/market_intelligence/context.py` | Construit le contexte à un instant donné et écrit les fichiers pour l'EA |
 | `src/market_intelligence/cli.py` | Commandes `audit`, `collect`, `context`, `asof`, `status` |
 | `mt5/Scripts/AMB_ExportCalendar.mq5` | Exporte le calendrier économique du terminal |
-| `tests/` | 27 tests sur des réponses réelles enregistrées, sans appel réseau |
+| `tests/` | 84 tests sur des réponses réelles enregistrées, sans appel réseau |
+| `.github/workflows/tests.yml` | Intégration continue : tests sous Linux et Windows, Python 3.11 à 3.13 |
 
 Ajouter une source revient à écrire une classe avec deux méthodes, `check()` et `collect(since)`, et à
 l'inscrire dans `connectors/__init__.py`. La panne d'un connecteur n'arrête pas les autres.
 
 ## Modèle de données
 
-**`observations`** : une ligne par version d'un chiffre. Clé : série, date d'observation, date de version.
-Une ligne n'est jamais modifiée ni supprimée.
+**`observations`** : une ligne par version d'un chiffre. Clé : série, période, date de version.
+Une ligne n'est jamais modifiée ni supprimée. Une ligne incohérente est refusée avec une erreur.
+
+Quatre notions sont tenues séparées :
 
 | Colonne | Sens |
 | --- | --- |
-| `obs_date` | Période mesurée (le jour, ou le 1er du mois pour une série mensuelle) |
-| `vintage_date` | Date de la version |
-| `available_at` | Instant UTC à partir duquel ce chiffre était connu. Toute requête de backtest filtre dessus |
-| `available_basis` | Origine de cette date, voir ci-dessous |
-| `fetch_id` | Renvoi vers l'appel qui a rapporté la donnée, donc vers le fichier brut archivé |
+| `obs_date` | **Période économique** mesurée : le jour, ou le 1er du mois pour une série mensuelle |
+| `vintage_date` | **Date de la version** dans la source |
+| `available_at` | **Meilleure estimation** de l'instant où le chiffre a été connu |
+| `available_at_safe` | **Borne sûre** : instant à partir duquel un backtest a le droit de voir le chiffre |
 
-**`events`** : calendrier. `time_basis` vaut `published` quand l'heure vient de la source (communiqués,
-discours, calendrier MT5) et `convention` quand elle est déduite de l'usage (14 h à New York pour une
-décision du FOMC, 8 h 30 pour une statistique). `first_seen_at` n'est jamais réécrit.
+Trois colonnes qualifient ces dates :
+
+| Colonne | Valeurs |
+| --- | --- |
+| `available_basis` | `vintage` (date de version ALFRED), `observed` (instant où notre collecteur a vu la valeur), `rule` (règle prudente appliquée à un historique chargé après coup) |
+| `time_quality` | `observed` (instant mesuré) ou `estimated` (heure supposée) |
+| `release_kind` | `initial` (première valeur publiée pour la période), `revision` (valeur modifiée par une version ultérieure), `backfill` (valeur déjà ancienne au premier chargement : on ignore si elle est initiale ou révisée) |
+
+**`events`** : calendrier. `time_basis` vaut `published` quand l'heure vient de la source (communiqués et
+discours de la Fed, calendrier MT5 en mode « heure exacte ») et `estimated` dans tous les autres cas : 14 h à
+New York pour une décision du FOMC à venir, 8 h 30 pour une statistique. Une heure publiée n'est jamais
+remplacée par une estimation. `advance_notice` vaut `scheduled` ou `unscheduled`. `first_seen_at` n'est
+jamais réécrit.
 
 **`fetch_log`** : chaque appel, réussi ou non, avec l'empreinte SHA-256 de la réponse et son chemin.
 
+Une base créée avant ce schéma est refusée au démarrage, avec la consigne de la reconstruire.
+
 ## Prévention du look-ahead
 
-| `available_basis` | Séries | Comment la date est établie |
+### Publications et révisions
+
+- La valeur initiale et chaque révision sont des lignes distinctes. `first_releases()` ne renvoie que les
+  lignes `initial` ; `revisions()` donne l'historique complet d'une période.
+- La toute première version chargée d'une série est marquée `backfill` : elle contient des périodes déjà
+  publiées, dont la valeur d'origine est inconnue. Elle n'est jamais présentée comme une première publication.
+- **Une date de version ALFRED n'est pas assimilée à une publication.** C'est le jour où FRED a enregistré la
+  version. Elle est classée d'après son contenu : si elle apporte une période nouvelle, c'est un événement
+  `data_release` ; si elle ne fait que modifier le passé, c'est un événement `data_revision` de faible
+  importance. Sur les données réelles depuis 2015, 10 versions sont dans ce second cas (8 pour le CPI, dont
+  la révision annuelle de février, 1 pour l'emploi, 1 pour le PCE).
+
+### Heures estimées
+
+L'heure d'une version ALFRED (8 h 30 à New York) est une estimation non vérifiée. Deux lectures existent :
+
+| Lecture | Règle | Usage |
 | --- | --- | --- |
-| `vintage` | CPI, PCE, emploi, chômage | Date de publication fournie par ALFRED, à 8 h 30 heure de New York |
-| `observed` | Toutes, en collecte régulière | Instant où notre collecteur a vu la valeur pour la première fois |
-| `rule` | Historique quotidien récupéré après coup | Règle prudente : jour ouvré suivant à 18 h (New York) pour les taux, cinq jours ouvrés pour l'indice du dollar, samedi pour le rapport de la CFTC |
+| Prudente, par défaut | Le chiffre n'est visible qu'à `available_at_safe`, soit la fin du jour de la version à New York | Backtests, contexte |
+| Estimée, sur demande (`safe=False`, option `--estimated`) | Le chiffre est visible à l'heure supposée | Analyse seulement |
 
-Trois règles s'y ajoutent :
+Conséquence assumée : le jour d'une publication, le contexte garde l'ancien chiffre jusqu'au lendemain.
+C'est le prix à payer tant que les heures réelles ne sont pas importées du calendrier MT5.
 
-- La première publication et chaque révision sont des lignes distinctes. `first_releases()` donne ce que
-  le marché a vu le jour même, `revisions()` l'historique d'un chiffre.
-- Le résultat d'un événement (`actual`) est masqué tant que son heure prévue n'est pas passée.
+### Événements
+
+- Le résultat d'un événement (`actual`, `revised_previous`) est masqué tant que son heure prévue n'est pas
+  passée. La prévision reste visible.
+- Un événement non annoncé à l'avance n'apparaît pas avant d'avoir eu lieu. C'est le cas des discours (le
+  flux de la Fed ne les liste qu'une fois prononcés) et des communiqués du FOMC publiés hors de l'heure
+  habituelle (3 décisions d'urgence depuis 2015).
 - Un instant sans fuseau horaire est refusé par le code.
 
-Limites connues :
+### Règles de disponibilité de l'historique quotidien
 
-- L'heure de 8 h 30 est une convention. Une publication décalée serait datée trop tôt de quelques heures
-  le jour même. L'import du calendrier MT5 corrigera ce point avec des heures réelles.
+| Série | Règle appliquée à l'historique chargé après coup |
+| --- | --- |
+| Rendements, taux réel, fed funds | Jour ouvré suivant à 18 h (New York) |
+| Indice large du dollar | Cinq jours ouvrés plus tard |
+| Fourchette cible de la Fed | Le jour même à 0 h (New York) |
+| Rapport de la CFTC (positions du mardi) | Samedi suivant à 15 h 30 (New York) |
+| BLS | Instant de notre collecte : jamais utilisable avant |
+
+En collecte régulière, ces règles sont remplacées par l'instant réellement observé.
+
+### Limites connues
+
+- L'heure de 8 h 30 reste une estimation pour les événements du calendrier. Si une publication a eu lieu à
+  une autre heure, la fenêtre de blocage autour de l'annonce est mal placée. Un seul recoupement a été fait :
+  le CPI du 10 novembre 2026 figure à 13 h 30 UTC sur le calendrier public MQL5, comme l'estimation.
+- Une date de version ALFRED peut être postérieure à la publication officielle. L'erreur va alors dans le
+  sens prudent pour les valeurs, mais place l'événement au mauvais jour.
 - Les jours fériés ne sont pas connus : la règle des taux quotidiens peut être trop tôt d'un jour ouvré
-  autour d'un férié. La collecte régulière remplace cette règle par l'instant observé.
-- Avant la première date de version chargée (1er janvier 2015 par défaut), aucune donnée macro n'est
-  réputée connue.
+  autour d'un férié.
+- L'historique quotidien chargé après coup (36 189 lignes) est la version actuelle des séries. Une révision
+  ancienne d'un taux ou de l'indice du dollar serait invisible.
+- Avant la première version chargée (1er janvier 2015 par défaut), aucune donnée macro n'est réputée connue,
+  et les 24 premières périodes de chaque série macro n'ont pas de valeur initiale établie.
 - Les prévisions du consensus n'existent pas encore dans le stockage.
-- En reconstitution historique, un discours apparaît comme événement à venir même si son annonce a été
-  tardive. Son contenu, lui, n'est jamais utilisé.
+- Une réunion du FOMC ajoutée au calendrier en cours d'année apparaîtrait comme connue à l'avance.
 
 ## Fichiers produits pour l'Expert Advisor
 
@@ -121,6 +171,7 @@ Les fichiers sont écrits dans un fichier temporaire puis renommés : l'EA ne li
   avec son âge. Au-delà de sa durée de validité, une valeur passe à `stale` et sort des calculs.
 - Le biais n'est publié que si deux composantes au moins sont exploitables.
 - Si le calendrier n'a pas été rafraîchi depuis 48 heures, `risk_level` passe à `unknown`.
+- Une réponse de refus (quota, clé invalide) est distinguée d'une panne et signalée telle quelle.
 - Les rendements du H.15 de la Fed sont stockés en double des séries FRED, pour disposer d'une source
   de secours. La bascule automatique entre les deux reste à écrire.
 
@@ -146,7 +197,4 @@ Planifier ensuite, avec le Planificateur de tâches de Windows, la collecte une 
 génération du contexte toutes les quinze minutes. La première collecte prend environ deux minutes, les
 suivantes une vingtaine de secondes.
 
-Calendrier MT5 : compiler `AMB_ExportCalendar.mq5` dans MetaEditor, le lancer sur un graphique, copier
-le fichier `Common\Files\amb_calendar_USD.csv` dans `data\inbox\mt5_calendar\`, puis relancer `collect`.
-Contrôle à faire sur le premier export : les lignes « Nonfarm Payrolls » doivent indiquer 12:30 ou
-13:30 dans la colonne `time_utc`. Une autre heure signale un décalage horaire à corriger.
+Calendrier MT5 : la procédure de compilation, d'export et de validation est dans `docs/MT5_CALENDAR.md`.

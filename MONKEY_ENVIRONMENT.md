@@ -63,6 +63,13 @@ Sources publiques envisagées :
 - CFTC : `www.cftc.gov`.
 - World Gold Council : `www.gold.org`.
 
+Hôtes supplémentaires réellement utilisés par le module Market Intelligence (constat du 12 novembre 2026) :
+
+- `alfred.stlouisfed.org` : versions datées des séries FRED (ALFRED). Indispensable au point-in-time.
+- `publicreporting.cftc.gov` : API publique de la CFTC (rapport Commitments of Traders). `www.cftc.gov` n'est pas utilisé par le code.
+
+Les domaines nus (`federalreserve.gov`, `bls.gov`, `cftc.gov`, `gold.org`) ne servent aucune donnée : seuls les sous-domaines exacts comptent. Détail dans `docs/SOURCES.md`.
+
 Développement et dépendances :
 
 - GitHub : `github.com`, `api.github.com`.

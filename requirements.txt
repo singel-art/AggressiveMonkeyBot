@@ -1,4 +1,14 @@
-# Coeur du module Market Intelligence : une seule dependance externe.
-requests>=2.31
-# Fuseaux horaires IANA : indispensable sous Windows (PC et VPS), inutile sous Linux.
-tzdata>=2024.1
+# Versions exactes verifiees le 2026-11-12 : 80 tests reussis sous Python 3.11, 3.12 et 3.13 (Linux).
+# Les bornes compatibles sont declarees dans pyproject.toml ; ce fichier fige une installation
+# reproductible. Un test verifie que les deux fichiers ne se contredisent pas.
+#
+#   pip install -r requirements.txt && pip install --no-deps -e .
+#
+requests==2.34.2
+# Dependances de requests
+certifi==2026.10.23
+charset-normalizer==3.5.2
+idna==3.20
+urllib3==2.8.0
+# Fuseaux horaires IANA : necessaire sous Windows seulement (non teste localement, verifie par l'integration continue).
+tzdata==2026.6 ; platform_system == "Windows"
