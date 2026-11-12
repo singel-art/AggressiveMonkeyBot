@@ -19,6 +19,7 @@ from .connectors import CONNECTORS
 from .connectors.base import CheckResult, CollectReport
 from .context import build_context, write_context
 from .http import HttpClient
+from .policy import COLUMNS
 from .store import SchemaMismatch, Store
 from .timeutil import iso, now_utc, parse_iso
 
@@ -77,7 +78,8 @@ def cmd_collect(args) -> int:
 def cmd_context(args) -> int:
     settings, store, _ = _open(args)
     asof = parse_iso(args.asof) if args.asof else None
-    ctx = build_context(store, asof, historical=bool(args.asof))
+    ctx = build_context(store, asof, historical=bool(args.asof),
+                        policy=args.policy or settings.temporal_policy)
     if args.print_only:
         print(json.dumps(ctx, ensure_ascii=False, indent=2))
         return 0
@@ -92,15 +94,17 @@ def cmd_context(args) -> int:
 
 
 def cmd_asof(args) -> int:
-    _, store, _ = _open(args)
-    rows = store.asof(args.series, iso(parse_iso(args.when)), limit=args.last, safe=not args.estimated)
+    settings, store, _ = _open(args)
+    rows = store.asof(args.series, iso(parse_iso(args.when)), limit=args.last,
+                      policy=args.policy or settings.temporal_policy)
     if not rows:
         print("Aucune donnee disponible a cette date.")
         return 1
-    print("periode     valeur        version     dispo_estimee         dispo_sure            nature    heure      source")
+    print("periode     valeur        version     estimee               balanced              strict                nature    heure      source")
     for r in rows:
         print(f"{r['obs_date']}  {r['value']:<12g}  {r['vintage_date']}  {r['available_at']}  "
-              f"{r['available_at_safe']}  {r['release_kind']:<8}  {r['time_quality']:<9}  {r['source']}")
+              f"{r['available_at_balanced']}  {r['available_at_strict']}  {r['release_kind']:<8}  "
+              f"{r['time_quality']:<9}  {r['source']}")
     return 0
 
 
@@ -131,13 +135,13 @@ def main(argv=None) -> int:
     p.add_argument("--asof", help="instant UTC ISO ; absent = maintenant")
     p.add_argument("--out", help="dossier de sortie (ex. dossier Common\\Files de MT5)")
     p.add_argument("--print-only", action="store_true")
+    p.add_argument("--policy", choices=list(COLUMNS), help="politique temporelle (defaut : balanced)")
     p.set_defaults(func=cmd_context)
     p = sub.add_parser("asof")
     p.add_argument("series")
     p.add_argument("when")
     p.add_argument("--last", type=int, default=6)
-    p.add_argument("--estimated", action="store_true",
-                   help="utiliser l'heure estimee au lieu de la borne sure (analyse seulement)")
+    p.add_argument("--policy", choices=list(COLUMNS), help="politique temporelle (defaut : balanced)")
     p.set_defaults(func=cmd_asof)
     sub.add_parser("status").set_defaults(func=cmd_status)
     args = parser.parse_args(argv)

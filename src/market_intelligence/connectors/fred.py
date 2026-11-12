@@ -112,15 +112,11 @@ def market_availability(series: Series, obs_date: str, fetched_at: datetime) -> 
     return availability(market_rule_time(series, obs_date), fetched_at)
 
 
-def vintage_times(series: Series, vintage: str) -> tuple[str, str]:
-    """(heure estimee, borne sure) d'une version ALFRED.
-    L'heure usuelle de publication est une estimation non verifiee. La borne sure
-    est la fin du jour de la version a New York : avant elle, un backtest ne voit
-    pas la valeur."""
-    d = date.fromisoformat(vintage)
-    estimated = local_to_utc(d, series.release_time_et, ET)
-    safe = local_to_utc(d + timedelta(days=1), time(0, 0), ET)
-    return iso(estimated), iso(safe)
+def vintage_time(series: Series, vintage: str) -> str:
+    """Heure estimee d'une version ALFRED : l'heure usuelle de la publication, le jour
+    de la version. C'est une estimation non verifiee ; les instants de visibilite
+    ('balanced', 'strict') en sont deduits par la politique temporelle."""
+    return iso(local_to_utc(date.fromisoformat(vintage), series.release_time_et, ET))
 
 
 def compact_vintages(series: Series, by_vintage: dict[str, list[tuple[str, float]]],
@@ -135,7 +131,7 @@ def compact_vintages(series: Series, by_vintage: dict[str, list[tuple[str, float
         first_load = not known
     rows = []
     for vintage in sorted(by_vintage):
-        estimated, safe = vintage_times(series, vintage)
+        estimated = vintage_time(series, vintage)
         for obs_date, value in by_vintage[vintage]:
             if obs_date < obs_start or known.get(obs_date) == value:
                 continue
@@ -143,7 +139,7 @@ def compact_vintages(series: Series, by_vintage: dict[str, list[tuple[str, float
             known[obs_date] = value
             rows.append(Observation(series.series_id, obs_date, vintage, value, estimated,
                                     "vintage", "alfred", fetch_id, release_kind=kind,
-                                    time_quality="estimated", available_at_safe=safe))
+                                    time_quality="estimated"))
         first_load = False
     return rows
 

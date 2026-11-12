@@ -5,6 +5,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from .policy import DEFAULT_POLICY, column
+
 # Racine du depot : <racine>/src/market_intelligence/config.py
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -15,6 +17,7 @@ class Settings:
     fred_api_key: str | None
     bls_api_key: str | None
     proxy: str | None = None
+    temporal_policy: str = DEFAULT_POLICY
 
     @property
     def raw_dir(self) -> Path:
@@ -50,11 +53,17 @@ def read_env_file(path: Path) -> dict[str, str]:
 def load_settings(data_dir: str | os.PathLike | None = None, env_file: Path | None = None) -> Settings:
     """Les variables d'environnement priment sur le fichier .env (jamais versionne)."""
     for name, value in read_env_file(env_file or PROJECT_ROOT / ".env").items():
-        if value and name in ("AMB_DATA_DIR", "BLS_API_KEY", "FRED_API_KEY"):
+        if value and name in ("AMB_DATA_DIR", "AMB_TEMPORAL_POLICY", "BLS_API_KEY", "FRED_API_KEY"):
             os.environ.setdefault(name, value)
     root = Path(data_dir or os.environ.get("AMB_DATA_DIR") or PROJECT_ROOT / "data")
     return Settings(
         data_dir=root,
         fred_api_key=os.environ.get("FRED_API_KEY") or None,
         bls_api_key=os.environ.get("BLS_API_KEY") or None,
+        temporal_policy=column_checked(os.environ.get("AMB_TEMPORAL_POLICY") or DEFAULT_POLICY),
     )
+
+
+def column_checked(policy: str) -> str:
+    column(policy)  # leve ValueError si la politique est inconnue
+    return policy

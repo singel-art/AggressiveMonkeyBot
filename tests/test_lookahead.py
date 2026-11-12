@@ -5,6 +5,8 @@ ne doit etre visible par une lecture faite a l'instant t.
 """
 from datetime import timedelta
 
+import pytest
+
 from market_intelligence.context import build_context
 from market_intelligence.store import Event
 from market_intelligence.timeutil import iso, parse_iso
@@ -14,63 +16,95 @@ def _second_before(text: str) -> str:
     return iso(parse_iso(text) - timedelta(seconds=1))
 
 
-def test_no_row_is_visible_before_its_safe_bound(unrate_store):
-    """Balayage exhaustif : pour chaque version stockee, une lecture faite une seconde
-    avant sa borne sure ne la contient pas, et une lecture a la borne la contient."""
+POLICY_COLUMNS = {"balanced": "available_at_balanced", "strict": "available_at_strict",
+                  "estimate": "available_at"}
+
+
+@pytest.mark.parametrize("policy", ["balanced", "strict", "estimate"])
+def test_no_row_is_visible_before_its_availability(unrate_store, policy):
+    """Balayage exhaustif, pour chaque politique : une lecture faite une seconde avant
+    l'instant de visibilite d'une version ne la contient pas ; a cet instant, elle la contient."""
+    col = POLICY_COLUMNS[policy]
     rows = unrate_store.db.execute("SELECT * FROM observations WHERE series_id='UNRATE'").fetchall()
     assert len(rows) > 40
     for row in rows:
         key = (row["obs_date"], row["vintage_date"])
         before = {(r["obs_date"], r["vintage_date"])
-                  for r in unrate_store.asof("UNRATE", _second_before(row["available_at_safe"]))}
-        at = {(r["obs_date"], r["vintage_date"]) for r in unrate_store.asof("UNRATE", row["available_at_safe"])}
+                  for r in unrate_store.asof("UNRATE", _second_before(row[col]), policy=policy)}
+        at = {(r["obs_date"], r["vintage_date"]) for r in unrate_store.asof("UNRATE", row[col], policy=policy)}
         assert key not in before
         assert key in at
 
 
-def test_asof_never_returns_rows_from_the_future(unrate_store):
+@pytest.mark.parametrize("policy", ["balanced", "strict", "estimate"])
+def test_asof_never_returns_rows_from_the_future(unrate_store, policy):
     for asof in ("2025-01-15T00:00:00Z", "2025-06-30T12:00:00Z", "2025-11-25T00:00:00Z",
-                 "2026-01-09T13:29:00Z", "2026-07-04T00:00:00Z"):
-        assert all(r["available_at_safe"] <= asof for r in unrate_store.asof("UNRATE", asof))
-        assert all(r["available_at"] <= asof for r in unrate_store.asof("UNRATE", asof, safe=False))
+                 "2026-01-09T13:29:00Z", "2026-01-09T13:40:00Z", "2026-07-04T00:00:00Z"):
+        assert all(r[POLICY_COLUMNS[policy]] <= asof for r in unrate_store.asof("UNRATE", asof, policy=policy))
 
 
-def test_revised_value_is_invisible_on_its_publication_day_by_default(unrate_store):
-    """Le 9 janvier 2026, novembre 2025 est revise de 4,6 a 4,5. L'heure (8 h 30) n'etant
-    qu'estimee, une lecture prudente garde 4,6 jusqu'a la fin du jour a New York."""
-    during_day = "2026-01-09T20:00:00Z"
-    safe = {r["obs_date"]: r["value"] for r in unrate_store.asof("UNRATE", during_day)}
-    estimate = {r["obs_date"]: r["value"] for r in unrate_store.asof("UNRATE", during_day, safe=False)}
-    assert safe["2025-11-01"] == 4.6 and "2025-12-01" not in safe
-    assert estimate["2025-11-01"] == 4.5 and estimate["2025-12-01"] == 4.4
+def test_policies_are_ordered_from_earliest_to_latest(unrate_store):
+    rows = unrate_store.db.execute("SELECT * FROM observations").fetchall()
+    assert all(r["available_at"] <= r["available_at_balanced"] <= r["available_at_strict"] for r in rows)
 
 
-def test_estimated_mode_respects_the_estimated_time(unrate_store):
-    before = unrate_store.asof("UNRATE", "2025-12-16T13:29:59Z", safe=False)
-    after = unrate_store.asof("UNRATE", "2025-12-16T13:30:00Z", safe=False)
-    assert "2025-11-01" not in {r["obs_date"] for r in before}
-    assert "2025-11-01" in {r["obs_date"] for r in after}
+def test_balanced_policy_applies_the_15_minute_margin(unrate_store):
+    """Decision du projet. Le 9 janvier 2026, novembre 2025 est revise de 4,6 a 4,5, a une
+    heure estimee de 8 h 30 a New York (13:30 UTC). La revision devient visible a 13:45 UTC."""
+    def november(asof, policy="balanced"):
+        return {r["obs_date"]: r["value"] for r in unrate_store.asof("UNRATE", asof, policy=policy)}["2025-11-01"]
+    assert november("2026-01-09T13:44:59Z") == 4.6
+    assert november("2026-01-09T13:45:00Z") == 4.5
+    assert unrate_store.asof("UNRATE", "2026-01-09T13:45:00Z") == \
+        unrate_store.asof("UNRATE", "2026-01-09T13:45:00Z", policy="balanced")      # balanced est le defaut
 
 
-def test_context_on_release_day_does_not_use_the_new_figure(unrate_store):
-    ctx = build_context(unrate_store, parse_iso("2025-12-16T15:00:00Z"), historical=True)
+def test_strict_policy_waits_for_the_end_of_the_publication_day(unrate_store):
+    def november(asof, policy):
+        return {r["obs_date"]: r["value"] for r in unrate_store.asof("UNRATE", asof, policy=policy)}["2025-11-01"]
+    assert november("2026-01-09T20:00:00Z", "strict") == 4.6
+    assert november("2026-01-10T05:00:00Z", "strict") == 4.5
+    assert november("2026-01-09T13:30:00Z", "estimate") == 4.5
+    assert november("2026-01-09T13:29:59Z", "estimate") == 4.6
+
+
+def test_unknown_policy_is_refused(unrate_store):
+    with pytest.raises(ValueError, match="politique temporelle inconnue"):
+        unrate_store.asof("UNRATE", "2026-01-09T13:45:00Z", policy="optimiste")
+
+
+def test_context_respects_the_margin_on_release_day(unrate_store):
+    """Le 16 decembre 2025, le chomage de novembre parait (heure estimee 13:30 UTC)."""
+    def rate(asof, policy="balanced"):
+        labor = build_context(unrate_store, parse_iso(asof), historical=True, policy=policy)["labor"]["unemployment_rate"]
+        return labor["obs_date"], labor["value"]
+    assert rate("2025-12-16T13:40:00Z") == ("2025-09-01", 4.4)        # dans la marge : ancien chiffre
+    assert rate("2025-12-16T13:45:00Z") == ("2025-11-01", 4.6)
+    assert rate("2025-12-16T20:00:00Z", "strict") == ("2025-09-01", 4.4)
+    assert rate("2025-12-17T05:00:00Z", "strict") == ("2025-11-01", 4.6)
+
+
+def test_context_declares_policy_and_how_reliable_each_timestamp_is(unrate_store):
+    ctx = build_context(unrate_store, parse_iso("2025-12-17T15:00:00Z"), historical=True)
     labor = ctx["labor"]["unemployment_rate"]
-    assert labor["obs_date"] == "2025-09-01" and labor["value"] == 4.4
-    next_day = build_context(unrate_store, parse_iso("2025-12-17T05:00:00Z"), historical=True)
-    assert next_day["labor"]["unemployment_rate"]["value"] == 4.6
-
-
-def test_context_declares_how_reliable_each_timestamp_is(unrate_store):
-    labor = build_context(unrate_store, parse_iso("2025-12-17T15:00:00Z"), historical=True)["labor"]["unemployment_rate"]
+    assert ctx["temporal_policy"] == "balanced"
     assert labor["time_quality"] == "estimated" and labor["release_kind"] == "initial"
-    assert labor["available_at_safe"] > labor["available_at"]
+    assert labor["available_at"] < labor["available_at_balanced"] < labor["available_at_strict"]
+
+
+def test_observed_instants_get_no_margin(store):
+    from market_intelligence.store import Observation
+    store.add_observations([Observation("X", "2026-11-10", "2026-11-12", 1.0, "2026-11-12T09:00:00Z",
+                                        "observed", "fred", time_quality="observed")])
+    row = store.db.execute("SELECT * FROM observations").fetchone()
+    assert row["available_at"] == row["available_at_balanced"] == row["available_at_strict"]
 
 
 def test_year_on_year_uses_both_figures_as_known_then(cpi_store):
     """Glissement annuel du CPI de decembre 2023, calcule avant et apres la revision
     du 9 fevrier 2024 : les deux termes doivent venir de la version connue a la date lue."""
-    before = build_context(cpi_store, parse_iso("2024-02-09T04:00:00Z"), historical=True)["inflation"]["cpi_yoy"]
-    after = build_context(cpi_store, parse_iso("2024-02-10T06:00:00Z"), historical=True)["inflation"]["cpi_yoy"]
+    before = build_context(cpi_store, parse_iso("2024-02-09T04:00:00Z"), historical=True, policy="strict")["inflation"]["cpi_yoy"]
+    after = build_context(cpi_store, parse_iso("2024-02-10T06:00:00Z"), historical=True, policy="strict")["inflation"]["cpi_yoy"]
     assert before["obs_date"] == after["obs_date"] == "2023-12-01"
     assert before["vintage_date"] == "2024-01-11" and before["release_kind"] == "initial"
     assert after["vintage_date"] == "2024-02-09" and after["release_kind"] == "revision"

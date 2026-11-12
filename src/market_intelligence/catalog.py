@@ -73,6 +73,11 @@ FRED_RELEASES: dict[int, tuple[str, str]] = {
     53: ("Gross Domestic Product", "medium"),
 }
 
+# Source de secours d'une serie FRED : la meme donnee, lue a sa source d'origine
+# (rendements H.15 de la Federal Reserve). Utilisee par le contexte quand la serie
+# FRED est absente, perimee, ou en retard sur la source de secours.
+FALLBACKS: dict[str, str] = {"DGS10": "FED_H15_Y10", "DGS2": "FED_H15_Y2"}
+
 # Series BLS utilisees pour recouper les chiffres FRED (meme donnee, source d'origine).
 BLS_CROSSCHECK: dict[str, str] = {
     "CUSR0000SA0": "CPIAUCSL",

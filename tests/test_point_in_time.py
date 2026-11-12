@@ -36,7 +36,8 @@ def test_period_reference_is_distinct_from_version_and_availability(unrate_store
     assert row["obs_date"] == "2025-11-01"                  # periode mesuree
     assert row["vintage_date"] == "2025-12-16"              # version dans la source
     assert row["available_at"] == "2025-12-16T13:30:00Z"    # heure estimee (8 h 30 a New York)
-    assert row["available_at_safe"] == "2025-12-17T05:00:00Z"  # fin du jour a New York
+    assert row["available_at_balanced"] == "2025-12-16T13:45:00Z"  # politique du projet : + 15 minutes
+    assert row["available_at_strict"] == "2025-12-17T05:00:00Z"    # fin du jour a New York
     assert row["time_quality"] == "estimated" and row["available_basis"] == "vintage"
 
 
@@ -53,7 +54,7 @@ def test_safe_bound_cannot_precede_the_estimate(store):
     import pytest
     with pytest.raises(sqlite3.IntegrityError):
         store.add_observations([Observation("X", "2026-01-01", "2026-02-01", 1.0, "2026-02-01T13:30:00Z",
-                                            "vintage", "alfred", available_at_safe="2026-02-01T00:00:00Z")])
+                                            "vintage", "alfred", available_at_balanced="2026-02-01T00:00:00Z")])
 
 
 def test_event_result_is_hidden_until_scheduled_time(store):

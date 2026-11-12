@@ -36,7 +36,7 @@ def test_pinned_versions_satisfy_pyproject_ranges():
 
 def test_env_example_contains_no_secret_and_lists_every_variable():
     example = read_env_file(ROOT / ".env.example")
-    assert set(example) == {"BLS_API_KEY", "FRED_API_KEY", "AMB_DATA_DIR"}
+    assert set(example) == {"BLS_API_KEY", "FRED_API_KEY", "AMB_DATA_DIR", "AMB_TEMPORAL_POLICY"}
     assert all(value == "" for value in example.values())
     source = (ROOT / "src" / "market_intelligence" / "config.py").read_text(encoding="utf-8")
     assert set(re.findall(r'environ\.get\("([A-Z_]+)"\)', source)) == set(example)

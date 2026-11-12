@@ -6,13 +6,14 @@ Principe : une observation n'est jamais ecrasee. Chaque version d'un chiffre
 Toute lecture pour un backtest passe par `asof()`, qui ne renvoie que ce qui
 etait disponible a l'instant demande. C'est la protection contre le look-ahead.
 
-Quatre notions sont tenues separees pour chaque ligne :
+Les notions suivantes sont tenues separees pour chaque ligne :
 - `obs_date`     : la periode economique mesuree (date de reference) ;
 - `vintage_date` : la date de la version dans la source ;
 - `available_at` : notre meilleure estimation de l'instant de disponibilite ;
-- `available_at_safe` : une borne tardive sure. Si l'heure n'est qu'estimee,
-  c'est la fin du jour de publication a New York. Les lectures de backtest
-  utilisent cette borne par defaut.
+- `available_at_balanced` : instant de visibilite selon la politique du projet
+  ('balanced' : heure estimee + 15 minutes ; instant observe tel quel) ;
+- `available_at_strict` : borne tardive (fin du jour a New York si l'heure n'est
+  qu'estimee). Voir policy.py.
 
 `available_basis` dit d'ou vient la date :
 - 'vintage'  : date de version fournie par ALFRED. Ce n'est pas forcement la date
@@ -36,6 +37,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from .policy import DEFAULT_POLICY, bounds, column
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS fetch_log (
     fetch_id   INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,7 +56,8 @@ CREATE TABLE IF NOT EXISTS observations (
     vintage_date      TEXT NOT NULL,
     value             REAL NOT NULL,
     available_at      TEXT NOT NULL,
-    available_at_safe TEXT NOT NULL CHECK (available_at_safe >= available_at),
+    available_at_balanced TEXT NOT NULL CHECK (available_at_balanced >= available_at),
+    available_at_strict   TEXT NOT NULL CHECK (available_at_strict >= available_at_balanced),
     available_basis   TEXT NOT NULL CHECK (available_basis IN ('vintage','observed','rule')),
     time_quality      TEXT NOT NULL CHECK (time_quality IN ('observed','estimated')),
     release_kind      TEXT NOT NULL CHECK (release_kind IN ('initial','revision','backfill')),
@@ -61,7 +65,7 @@ CREATE TABLE IF NOT EXISTS observations (
     fetch_id          INTEGER REFERENCES fetch_log(fetch_id),
     PRIMARY KEY (series_id, obs_date, vintage_date)
 );
-CREATE INDEX IF NOT EXISTS idx_obs_asof ON observations(series_id, available_at_safe);
+CREATE INDEX IF NOT EXISTS idx_obs_asof ON observations(series_id, available_at_balanced);
 CREATE TABLE IF NOT EXISTS events (
     event_key        TEXT PRIMARY KEY,
     source           TEXT NOT NULL,
@@ -85,7 +89,7 @@ CREATE INDEX IF NOT EXISTS idx_events_time ON events(scheduled_at);
 """
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class SchemaMismatch(Exception):
@@ -104,11 +108,16 @@ class Observation:
     fetch_id: int | None = None
     release_kind: str = "backfill"
     time_quality: str = "estimated"
-    available_at_safe: str | None = None  # absent : identique a available_at
+    # Absents : calcules par la politique temporelle (policy.bounds).
+    available_at_balanced: str | None = None
+    available_at_strict: str | None = None
 
-    @property
-    def safe(self) -> str:
-        return self.available_at_safe or self.available_at
+    def __post_init__(self):
+        balanced, strict = bounds(self.available_at, self.time_quality)
+        if self.available_at_balanced is None:
+            object.__setattr__(self, "available_at_balanced", balanced)
+        if self.available_at_strict is None:
+            object.__setattr__(self, "available_at_strict", max(strict, self.available_at_balanced))
 
 
 def release_kind(known: dict, obs_date: str, first_load: bool) -> str:
@@ -181,9 +190,10 @@ class Store:
         cur = self.db.executemany(
             # Seul un doublon de cle est ignore. Une ligne incoherente (borne sure
             # anterieure a l'estimation, valeur hors liste) leve une erreur.
-            "INSERT INTO observations VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+            "INSERT INTO observations VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(series_id, obs_date, vintage_date) DO NOTHING",
-            [(r.series_id, r.obs_date, r.vintage_date, r.value, r.available_at, r.safe,
+            [(r.series_id, r.obs_date, r.vintage_date, r.value, r.available_at,
+              r.available_at_balanced, r.available_at_strict,
               r.available_basis, r.time_quality, r.release_kind, r.source, r.fetch_id) for r in rows])
         self.db.commit()
         return cur.rowcount
@@ -192,22 +202,20 @@ class Store:
         """Derniere version stockee de chaque observation (sert a detecter les revisions)."""
         rows = self.db.execute(
             """SELECT o.obs_date, o.value FROM observations o
-               JOIN (SELECT obs_date, MAX(available_at_safe) m FROM observations
+               JOIN (SELECT obs_date, MAX(available_at_strict) m FROM observations
                      WHERE series_id=? GROUP BY obs_date) x
-                 ON o.obs_date=x.obs_date AND o.available_at_safe=x.m
+                 ON o.obs_date=x.obs_date AND o.available_at_strict=x.m
                WHERE o.series_id=?""", (series_id, series_id)).fetchall()
         return {r["obs_date"]: r["value"] for r in rows}
 
     def asof(self, series_id: str, asof: str, *, limit: int | None = None,
-             safe: bool = True) -> list[sqlite3.Row]:
+             policy: str = DEFAULT_POLICY) -> list[sqlite3.Row]:
         """La serie telle qu'elle etait connue a l'instant `asof` (UTC ISO).
         Pour chaque periode : la version la plus recente deja disponible.
 
-        safe=True (defaut, a utiliser en backtest) : une valeur dont l'heure n'est
-        qu'estimee n'apparait qu'apres la fin de son jour de publication.
-        safe=False : utilise l'heure estimee. A reserver a l'analyse, jamais a une
-        simulation de decisions prises le jour meme d'une publication."""
-        col = "available_at_safe" if safe else "available_at"
+        policy : 'balanced' (defaut, decision du projet), 'strict' ou 'estimate'.
+        Voir policy.py pour leur sens et leurs limites."""
+        col = column(policy)
         sql = f"""SELECT o.* FROM observations o
                  JOIN (SELECT obs_date, MAX({col}) m FROM observations
                        WHERE series_id=? AND {col}<=? GROUP BY obs_date) x
@@ -230,7 +238,7 @@ class Store:
     def vintages(self, series_id: str) -> list[sqlite3.Row]:
         """Une ligne par version : nombre de premieres publications et de revisions."""
         return self.db.execute(
-            """SELECT vintage_date, MIN(available_at) available_at, MIN(available_at_safe) available_at_safe,
+            """SELECT vintage_date, MIN(available_at) available_at, MIN(available_at_balanced) available_at_balanced,
                       SUM(release_kind='initial') n_initial, SUM(release_kind='revision') n_revision,
                       SUM(release_kind='backfill') n_backfill, MAX(fetch_id) fetch_id
                FROM observations WHERE series_id=? GROUP BY vintage_date ORDER BY vintage_date""",
@@ -238,7 +246,7 @@ class Store:
 
     def revisions(self, series_id: str, obs_date: str) -> list[sqlite3.Row]:
         return self.db.execute(
-            "SELECT * FROM observations WHERE series_id=? AND obs_date=? ORDER BY available_at_safe",
+            "SELECT * FROM observations WHERE series_id=? AND obs_date=? ORDER BY available_at",
             (series_id, obs_date)).fetchall()
 
     def series_summary(self) -> list[sqlite3.Row]:

@@ -9,7 +9,7 @@ Regles de surete :
   n'entre dans aucun calcul ;
 - le biais n'est publie que si au moins deux composantes sont exploitables ;
 - une valeur dont l'heure de publication n'est qu'estimee n'entre dans le contexte
-  qu'apres la fin de son jour de publication (borne `available_at_safe`) ;
+  qu'apres la marge de la politique temporelle ('balanced' : 15 minutes) ;
 - chaque valeur porte sa serie, sa date d'observation, sa date de disponibilite
   et sa source.
 
@@ -27,10 +27,11 @@ import unicodedata
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from .catalog import BLS_CROSSCHECK, SERIES_BY_ID
+from .catalog import BLS_CROSSCHECK, FALLBACKS, SERIES_BY_ID
+from .policy import DEFAULT_POLICY, column
 from .timeutil import iso, now_utc, parse_iso
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 PARAMS = {
     "blackout_minutes_before": 30,
@@ -52,7 +53,8 @@ COT_MAX_AGE_DAYS = 12
 def _provenance(row) -> dict:
     """Tout ce qui permet de juger la fiabilite temporelle d'une valeur."""
     return {"vintage_date": row["vintage_date"], "available_at": row["available_at"],
-            "available_at_safe": row["available_at_safe"], "available_basis": row["available_basis"],
+            "available_at_balanced": row["available_at_balanced"],
+            "available_at_strict": row["available_at_strict"], "available_basis": row["available_basis"],
             "time_quality": row["time_quality"], "release_kind": row["release_kind"],
             "source": row["source"]}
 
@@ -78,6 +80,45 @@ def _metric(store, series_id: str, asof: datetime, *, title: str | None = None,
             out[f"change_{n}obs_pct"] = round((last["value"] / rows[-1 - n]["value"] - 1) * 100, 4) \
                 if rows[-1 - n]["value"] else None
     return out
+
+
+def _metric_with_fallback(store, series_id: str, asof: datetime) -> dict:
+    """Serie principale, ou sa source de secours si la principale est indisponible,
+    perimee ou en retard. Le remplacement est toujours declare dans le resultat."""
+    primary = _metric(store, series_id, asof)
+    backup_id = FALLBACKS.get(series_id)
+    if backup_id is None:
+        return primary
+    meta = SERIES_BY_ID[series_id]
+    backup = _metric(store, backup_id, asof, title=meta.title, max_age_days=meta.max_age_days)
+    backup["unit"] = meta.unit
+    if backup.get("status") != "ok":
+        primary["fallback"] = {"series_id": backup_id, "used": False,
+                               "status": backup.get("status", "unavailable")}
+        return primary
+    if primary.get("status") != "ok":
+        reason = f"serie principale {primary.get('status', 'unavailable')}"
+    elif backup["obs_date"] > primary["obs_date"]:
+        reason = f"serie principale en retard ({primary['obs_date']})"
+    else:
+        primary["fallback"] = {"series_id": backup_id, "used": False, "status": "ok"}
+        return primary
+    backup["fallback"] = {"used": True, "replaces": series_id, "reason": reason}
+    return backup
+
+
+class _PolicyView:
+    """Vue du stockage qui applique une politique temporelle a toutes les lectures."""
+
+    def __init__(self, store, policy: str):
+        column(policy)  # valide le nom
+        self._store, self._policy = store, policy
+
+    def asof(self, series_id, asof, *, limit=None):
+        return self._store.asof(series_id, asof, limit=limit, policy=self._policy)
+
+    def __getattr__(self, name):
+        return getattr(self._store, name)
 
 
 def _yoy(store, series_id: str, asof: datetime) -> dict:
@@ -233,12 +274,14 @@ def _verification(store, asof: datetime) -> list[dict]:
     return out
 
 
-def build_context(store, asof: datetime | None = None, *, historical: bool = False) -> dict:
+def build_context(store, asof: datetime | None = None, *, historical: bool = False,
+                  policy: str = DEFAULT_POLICY) -> dict:
     generated = now_utc()
     asof = asof or generated
+    store = _PolicyView(store, policy)
     rates = {
-        "us10y": _metric(store, "DGS10", asof),
-        "us2y": _metric(store, "DGS2", asof),
+        "us10y": _metric_with_fallback(store, "DGS10", asof),
+        "us2y": _metric_with_fallback(store, "DGS2", asof),
         "real10y": _metric(store, "DFII10", asof),
         "breakeven10y": _metric(store, "T10YIE", asof),
         "fed_funds_effective": _metric(store, "DFF", asof),
@@ -249,6 +292,7 @@ def build_context(store, asof: datetime | None = None, *, historical: bool = Fal
         "generated_at": iso(generated),
         "asof": iso(asof),
         "mode": "historical" if historical else "live",
+        "temporal_policy": policy,
         "valid_until": iso(generated + timedelta(minutes=PARAMS["context_ttl_minutes"])),
         "policy": _policy(store, asof),
         "rates": rates,
@@ -311,6 +355,7 @@ def flat_rows(ctx: dict) -> list[tuple[str, str, str, str]]:
     put("generated_at_epoch", epoch(ctx["generated_at"]))
     put("valid_until_epoch", epoch(ctx["valid_until"]))
     put("context_status", ctx["status"])
+    put("temporal_policy", ctx["temporal_policy"])
     risk = ctx["events"]["announcement_risk"]
     put("risk_level", risk["level"])
     nxt = ctx["events"]["next_high_impact"]
