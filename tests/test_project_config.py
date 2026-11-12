@@ -29,9 +29,11 @@ def test_pinned_versions_satisfy_pyproject_ranges():
         req = Requirement(text)
         assert req.name.lower() in runtime, f"{req.name} absent de requirements.txt"
         assert runtime[req.name.lower()] in req.specifier
-    for text in project["optional-dependencies"]["dev"]:
-        req = Requirement(text)
-        assert dev[req.name.lower()] in req.specifier
+    everything = {**runtime, **dev}
+    for extra in ("dev", "wgc"):
+        for text in project["optional-dependencies"][extra]:
+            req = Requirement(text)
+            assert everything[req.name.lower()] in req.specifier
 
 
 def test_env_example_contains_no_secret_and_lists_every_variable():

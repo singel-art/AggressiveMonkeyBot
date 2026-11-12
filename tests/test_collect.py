@@ -155,10 +155,10 @@ def test_wgc_collect_archives_dropped_files_untouched(store, settings):
     inbox = settings.inbox_dir / "wgc"
     inbox.mkdir(parents=True)
     payload = b"contenu de test, pas un fichier du World Gold Council"
-    (inbox / "exemple.xlsx").write_bytes(payload)
+    (inbox / "exemple.pdf").write_bytes(payload)
     report = WgcConnector(None, store, settings).collect(date(2025, 1, 1))
-    assert report.ok and report.notes == ["archive : exemple.xlsx"]
-    archived = list((settings.raw_dir / "wgc").rglob("*exemple.xlsx"))
+    assert report.ok and report.notes == ["archive sans lecture : exemple.pdf"]
+    archived = list((settings.raw_dir / "wgc").rglob("*exemple.pdf"))
     assert len(archived) == 1 and archived[0].read_bytes() == payload
     assert not list(inbox.iterdir())
     import hashlib

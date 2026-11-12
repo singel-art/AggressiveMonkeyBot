@@ -168,6 +168,25 @@ def _policy(store, asof: datetime) -> dict:
     return out
 
 
+def _gold_market(store, asof: datetime) -> dict:
+    """Series issues des classeurs World Gold Council deposes a la main. Elles decrivent
+    le fond du marche (mensuel ou quotidien lisse) et n'entrent dans aucun calcul de biais.
+    Leur date de publication reelle est inconnue : `available_at` est l'instant de reception."""
+    from .connectors.wgc import SERIES_INFO
+    out = {}
+    for series_id, (title, unit, max_age) in SERIES_INFO.items():
+        m = _metric(store, series_id, asof, title=title, max_age_days=max_age, lookbacks=(1, 3))
+        m["unit"] = unit
+        if m.get("status") != "unavailable":
+            m["publication_time"] = "unknown"
+        out[series_id.removeprefix("WGC_").lower()] = m
+    count = out["cb_reporting_count"]
+    if count.get("status") == "ok" and count.get("change_3obs") is not None and count["change_3obs"] < 0:
+        out["cb_net_tonnes_sum"]["warning"] = ("derniers mois incomplets : le nombre de pays renseignes "
+                                               "baisse, la somme est provisoire")
+    return out
+
+
 def _events(store, asof: datetime, historical: bool) -> dict:
     a = iso(asof)
     upcoming = store.events_between(a, iso(asof + timedelta(days=7)), asof=a, min_importance="medium")
@@ -306,6 +325,7 @@ def build_context(store, asof: datetime | None = None, *, historical: bool = Fal
                                          "sur l'or (COMEX)", max_age_days=COT_MAX_AGE_DAYS, lookbacks=(1, 4)),
             "open_interest": _metric(store, "COT_GOLD_OPEN_INTEREST", asof, title="Positions ouvertes sur "
                                      "l'or (COMEX)", max_age_days=COT_MAX_AGE_DAYS, lookbacks=(1, 4))},
+        "gold_market": _gold_market(store, asof),
         "events": _events(store, asof, historical),
         "verification": _verification(store, asof),
     }
