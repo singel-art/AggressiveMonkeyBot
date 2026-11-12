@@ -14,7 +14,7 @@ from ..errors import ParseError, SourceUnavailable
 from ..store import Observation
 from ..timeutil import ET, iso, local_to_utc
 from .base import CheckResult, CollectReport, Connector
-from .fred import LIVE_WINDOW
+from .fred import availability
 
 API = "https://publicreporting.cftc.gov/resource/72hh-3qpy.json"
 GOLD_CODE = "088691"
@@ -74,17 +74,17 @@ class CftcConnector(Connector):
             return report
         rows = []
         known = {sid: self.store.latest_values(sid) for sid in [*FIELDS, "COT_GOLD_MM_NET"]}
+        first_load = {sid: not values for sid, values in known.items()}
         for item in reports:
             d = date.fromisoformat(item["report_date"])
             # Mardi -> vendredi 15 h 30. Marge d'un jour pour les semaines a jour ferie.
             rule = local_to_utc(d + timedelta(days=4), RELEASE_TIME_ET, ET)
-            if res.fetched_at <= rule + LIVE_WINDOW:
-                available, basis = iso(res.fetched_at), "observed"
-            else:
-                available, basis = iso(rule), "rule"
+            available, basis, quality = availability(rule, res.fetched_at)
             for series_id in known:
                 if item["report_date"] not in known[series_id]:
+                    kind = "initial" if basis == "observed" and not first_load[series_id] else "backfill"
                     rows.append(Observation(series_id, item["report_date"], available[:10],
-                                            item[series_id], available, basis, "cftc", res.fetch_id))
+                                            item[series_id], available, basis, "cftc", res.fetch_id,
+                                            release_kind=kind, time_quality=quality))
         report.rows_added = self.store.add_observations(rows)
         return report

@@ -26,7 +26,7 @@ def test_old_data_is_flagged_stale_and_excluded(unrate_store):
 
 def test_context_uses_only_what_was_known(unrate_store):
     before = build_context(unrate_store, parse_iso("2025-12-17T15:00:00Z"), historical=True)
-    after = build_context(unrate_store, parse_iso("2026-01-10T00:00:00Z"), historical=True)
+    after = build_context(unrate_store, parse_iso("2026-01-10T06:00:00Z"), historical=True)
     assert before["labor"]["unemployment_rate"]["value"] == 4.6
     assert before["labor"]["unemployment_rate"]["obs_date"] == "2025-11-01"
     assert after["labor"]["unemployment_rate"]["value"] == 4.4
@@ -34,7 +34,7 @@ def test_context_uses_only_what_was_known(unrate_store):
 
 
 def test_context_files_are_written_whole(unrate_store, tmp_path):
-    ctx = build_context(unrate_store, parse_iso("2026-01-10T00:00:00Z"), historical=True)
+    ctx = build_context(unrate_store, parse_iso("2026-01-10T06:00:00Z"), historical=True)
     paths = write_context(ctx, tmp_path)
     assert not list(tmp_path.glob("*.tmp"))
     flat = read_flat(paths["flat"])

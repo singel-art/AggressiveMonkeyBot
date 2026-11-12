@@ -20,7 +20,7 @@ from .connectors.base import CheckResult, CollectReport
 from .context import build_context, write_context
 from .errors import SourceUnavailable
 from .http import HttpClient
-from .store import Store
+from .store import SchemaMismatch, Store
 from .timeutil import iso, now_utc, parse_iso
 
 # Sources etudiees mais sans connecteur : l'audit en garde la preuve.
@@ -98,14 +98,14 @@ def cmd_context(args) -> int:
 
 def cmd_asof(args) -> int:
     _, store, _ = _open(args)
-    rows = store.asof(args.series, iso(parse_iso(args.when)), limit=args.last)
+    rows = store.asof(args.series, iso(parse_iso(args.when)), limit=args.last, safe=not args.estimated)
     if not rows:
         print("Aucune donnee disponible a cette date.")
         return 1
-    print("obs_date    valeur        version     disponible_le         base      source")
+    print("periode     valeur        version     dispo_estimee         dispo_sure            nature    heure      source")
     for r in rows:
         print(f"{r['obs_date']}  {r['value']:<12g}  {r['vintage_date']}  {r['available_at']}  "
-              f"{r['available_basis']:<8}  {r['source']}")
+              f"{r['available_at_safe']}  {r['release_kind']:<8}  {r['time_quality']:<9}  {r['source']}")
     return 0
 
 
@@ -113,7 +113,8 @@ def cmd_status(args) -> int:
     _, store, _ = _open(args)
     print("Series :")
     for r in store.series_summary():
-        print(f"  {r['series_id']:<24} {r['source']:<8} {r['n_obs']:>5} obs, {r['n_rows']:>6} versions, "
+        print(f"  {r['series_id']:<24} {r['source']:<8} {r['n_obs']:>5} periodes, {r['n_rows']:>6} versions "
+              f"(initiales {r['n_initial']}, revisions {r['n_revision']}, historique {r['n_backfill']}), "
               f"{r['first_obs']} -> {r['last_obs']}")
     print("Evenements :")
     for r in store.event_counts():
@@ -140,10 +141,16 @@ def main(argv=None) -> int:
     p.add_argument("series")
     p.add_argument("when")
     p.add_argument("--last", type=int, default=6)
+    p.add_argument("--estimated", action="store_true",
+                   help="utiliser l'heure estimee au lieu de la borne sure (analyse seulement)")
     p.set_defaults(func=cmd_asof)
     sub.add_parser("status").set_defaults(func=cmd_status)
     args = parser.parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except SchemaMismatch as exc:
+        print(f"Erreur : {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

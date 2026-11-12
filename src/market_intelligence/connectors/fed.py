@@ -19,7 +19,7 @@ from ..errors import ParseError, SourceUnavailable
 from ..store import Event, Observation
 from ..timeutil import ET, add_business_days, iso, local_to_utc
 from .base import CheckResult, CollectReport, Connector
-from .fred import LIVE_WINDOW
+from .fred import availability
 
 BASE = "https://www.federalreserve.gov"
 FOMC_CALENDAR = f"{BASE}/monetarypolicy/fomccalendars.htm"
@@ -107,9 +107,15 @@ def parse_press(text: str, since: date) -> list[Event]:
         if kind is None or when is None or when.date() < since:
             continue
         link = item.get("l") or ""
+        # Un communique sorti a l'heure habituelle du FOMC correspond a une reunion du
+        # calendrier, connue a l'avance. A toute autre heure (decision d'urgence), rien
+        # ne permet de dire qu'il etait attendu : il n'est visible qu'une fois paru.
+        usual = when.astimezone(ET).time() == STATEMENT_TIME_ET
+        notice = "scheduled" if kind[0] != "fomc_statement" or usual else "unscheduled"
         events.append(Event(event_key=f"fed_press|{link or iso(when)}", source="fed", kind=kind[0],
                             title=htmllib.unescape(item["t"]), scheduled_at=iso(when),
-                            time_basis="published", importance=kind[1], url=BASE + link if link else None))
+                            time_basis="published", importance=kind[1], advance_notice=notice,
+                            url=BASE + link if link else None))
     return events
 
 
@@ -126,7 +132,9 @@ def parse_speeches(text: str, since: date) -> list[Event]:
         events.append(Event(event_key=f"fed_speech|{link or iso(when) + speaker}", source="fed",
                             kind="fed_speech", title=f"{speaker} : {htmllib.unescape(item['t'])}",
                             scheduled_at=iso(when), time_basis="published", importance=importance,
-                            url=BASE + link if link else None))
+                            # Le flux ne liste un discours qu'une fois prononce : on ignore
+                            # depuis quand il etait annonce.
+                            advance_notice="unscheduled", url=BASE + link if link else None))
     return events
 
 
@@ -185,7 +193,7 @@ class FedConnector(Connector):
             if m["note"]:
                 title += f" ({m['note']})"
             events.append(Event(event_key=f"fomc_meeting|{m['end']}", source="fed", kind="fomc_decision",
-                                title=title, scheduled_at=iso(when), time_basis="convention",
+                                title=title, scheduled_at=iso(when), time_basis="estimated",
                                 importance="high", url=FOMC_CALENDAR, fetch_id=res.fetch_id))
         return self.store.upsert_events(events, iso(res.fetched_at))
 
@@ -203,15 +211,15 @@ class FedConnector(Connector):
         rows = []
         for series_id, points in parse_h15(res.text).items():
             known = self.store.latest_values(series_id)
+            first_load = not known
             for obs_date, value in points:
                 if obs_date in known:
                     continue
                 # Le H.15 publie la valeur d'un jour le jour ouvre suivant vers 16 h 15 (New York).
                 rule = local_to_utc(add_business_days(date.fromisoformat(obs_date), 1), time(18, 0), ET)
-                if res.fetched_at <= rule + LIVE_WINDOW:
-                    available, basis = iso(res.fetched_at), "observed"
-                else:
-                    available, basis = iso(rule), "rule"
+                available, basis, quality = availability(rule, res.fetched_at)
+                kind = "initial" if basis == "observed" and not first_load else "backfill"
                 rows.append(Observation(series_id, obs_date, available[:10], value, available,
-                                        basis, "fed_h15", res.fetch_id))
+                                        basis, "fed_h15", res.fetch_id, release_kind=kind,
+                                        time_quality=quality))
         return self.store.add_observations(rows)

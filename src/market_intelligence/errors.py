@@ -10,3 +10,14 @@ class SourceUnavailable(Exception):
 
 class ParseError(Exception):
     """La source a repondu mais son format n'est pas celui attendu."""
+
+
+class SourceRefused(Exception):
+    """La source a repondu, mais a refuse la requete (quota, cle invalide...).
+    `code` vaut 'quota', 'invalid_key' ou 'refused'. Le message ne contient jamais la cle."""
+
+    def __init__(self, source: str, code: str, message: str):
+        super().__init__(f"[{source}] requete refusee ({code}) : {message}")
+        self.source = source
+        self.code = code
+        self.message = message

@@ -1,8 +1,12 @@
 """FRED et ALFRED (Federal Reserve Bank of St. Louis), sans cle API.
 
 - fredgraph.csv   : derniere version d'une serie (acces public, CSV).
-- ALFRED          : toutes les versions passees d'une serie ("vintages"), avec la
-                    date de chaque publication. C'est la base du point-in-time.
+- ALFRED          : toutes les versions passees d'une serie ("vintages"), datees.
+                    C'est la base du point-in-time. Une date de version ALFRED est
+                    le jour ou FRED a enregistre la version : elle n'est PAS
+                    assimilee d'office a une publication economique. Une version
+                    n'est classee "publication" que si elle apporte une periode
+                    nouvelle ; sinon c'est une revision.
 - releases/calendar : dates de publication passees et a venir d'une "release".
 
 Constat de l'audit du 2026-11-12 : fred.stlouisfed.org coupe les requetes dont
@@ -17,8 +21,8 @@ from datetime import date, datetime, time, timedelta
 
 from ..catalog import FRED_RELEASES, FRED_SERIES, Series
 from ..errors import ParseError, SourceUnavailable
-from ..store import Event, Observation
-from ..timeutil import CT, ET, add_business_days, iso, local_to_utc
+from ..store import Event, Observation, release_kind
+from ..timeutil import CT, ET, add_business_days, iso, local_to_utc, now_utc
 from .base import CheckResult, CollectReport, Connector
 
 FREDGRAPH = "https://fred.stlouisfed.org/graph/fredgraph.csv"
@@ -94,26 +98,53 @@ def market_rule_time(series: Series, obs_date: str) -> datetime:
     return local_to_utc(d, series.available_time_et, ET)
 
 
-def market_availability(series: Series, obs_date: str, fetched_at: datetime) -> tuple[str, str]:
-    """Date a partir de laquelle une valeur quotidienne est tenue pour connue."""
-    rule = market_rule_time(series, obs_date)
+def availability(rule: datetime, fetched_at: datetime) -> tuple[str, str, str]:
+    """(instant, base, qualite de l'heure) pour une valeur sans date de version.
+    Vue par le collecteur peu apres sa date theorique : instant reel d'observation.
+    Sinon (historique charge apres coup) : la regle, dont l'heure est une estimation."""
     if fetched_at <= rule + LIVE_WINDOW:
-        return iso(fetched_at), "observed"
-    return iso(rule), "rule"
+        return iso(fetched_at), "observed", "observed"
+    return iso(rule), "rule", "estimated"
+
+
+def market_availability(series: Series, obs_date: str, fetched_at: datetime) -> tuple[str, str, str]:
+    """Instant a partir duquel une valeur quotidienne est tenue pour connue."""
+    return availability(market_rule_time(series, obs_date), fetched_at)
+
+
+def vintage_times(series: Series, vintage: str) -> tuple[str, str]:
+    """(heure estimee, borne sure) d'une version ALFRED.
+    L'heure usuelle de publication est une estimation non verifiee. La borne sure
+    est la fin du jour de la version a New York : avant elle, un backtest ne voit
+    pas la valeur."""
+    d = date.fromisoformat(vintage)
+    estimated = local_to_utc(d, series.release_time_et, ET)
+    safe = local_to_utc(d + timedelta(days=1), time(0, 0), ET)
+    return iso(estimated), iso(safe)
 
 
 def compact_vintages(series: Series, by_vintage: dict[str, list[tuple[str, float]]],
-                     known: dict[str, float], obs_start: str, fetch_id: int) -> list[Observation]:
-    """Ne garde une ligne que lorsqu'un chiffre apparait ou change d'une version a la suivante."""
+                     known: dict[str, float], obs_start: str, fetch_id: int,
+                     first_load: bool | None = None) -> list[Observation]:
+    """Ne garde une ligne que lorsqu'un chiffre apparait ou change d'une version a la suivante.
+
+    Chaque ligne est classee : 'initial' (periode nouvelle), 'revision' (valeur
+    modifiee) ou 'backfill' (contenu de la toute premiere version chargee, dont on
+    ne peut pas dire s'il est initial ou deja revise)."""
+    if first_load is None:
+        first_load = not known
     rows = []
     for vintage in sorted(by_vintage):
-        available = iso(local_to_utc(date.fromisoformat(vintage), series.release_time_et, ET))
+        estimated, safe = vintage_times(series, vintage)
         for obs_date, value in by_vintage[vintage]:
             if obs_date < obs_start or known.get(obs_date) == value:
                 continue
+            kind = release_kind(known, obs_date, first_load)
             known[obs_date] = value
-            rows.append(Observation(series.series_id, obs_date, vintage, value, available,
-                                    "vintage", "alfred", fetch_id))
+            rows.append(Observation(series.series_id, obs_date, vintage, value, estimated,
+                                    "vintage", "alfred", fetch_id, release_kind=kind,
+                                    time_quality="estimated", available_at_safe=safe))
+        first_load = False
     return rows
 
 
@@ -149,17 +180,23 @@ class FredConnector(Connector):
     def collect_market(self, series: Series, since: date) -> int:
         res = self.http.get("fred", FREDGRAPH, params={"id": series.series_id, "cosd": since.isoformat()}, ext="csv")
         known = self.store.latest_values(series.series_id)
+        first_load = not known
         rows = []
         for obs_date, value in parse_fredgraph(res.text):
             if obs_date not in known:
-                available, basis = market_availability(series, obs_date, res.fetched_at)
+                available, basis, quality = market_availability(series, obs_date, res.fetched_at)
+                # Une valeur d'historique recuperee apres coup peut avoir ete revisee
+                # depuis sa parution : elle n'est pas presentee comme initiale.
+                kind = "initial" if basis == "observed" and not first_load else "backfill"
                 rows.append(Observation(series.series_id, obs_date, available[:10], value,
-                                        available, basis, "fred", res.fetch_id))
+                                        available, basis, "fred", res.fetch_id,
+                                        release_kind=kind, time_quality=quality))
             elif known[obs_date] != value:
                 # Revision detectee : nouvelle version, connue seulement a partir de maintenant.
                 now = iso(res.fetched_at)
                 rows.append(Observation(series.series_id, obs_date, now[:10], value, now,
-                                        "observed", "fred", res.fetch_id))
+                                        "observed", "fred", res.fetch_id,
+                                        release_kind="revision", time_quality="observed"))
         return self.store.add_observations(rows)
 
     # -- series revisees
@@ -179,6 +216,7 @@ class FredConnector(Connector):
         if not todo:
             return 0
         known = self.store.latest_values(series.series_id)
+        first_load = not known
         added = 0
         for i in range(0, len(todo), VINTAGE_BATCH):
             batch = todo[i:i + VINTAGE_BATCH]
@@ -187,30 +225,42 @@ class FredConnector(Connector):
                 "vintage_date": ",".join(batch), "cosd": obs_start}, ext="csv")
             by_vintage = parse_alfredgraph(res.text, series.series_id)
             added += self.store.add_observations(
-                compact_vintages(series, by_vintage, known, obs_start, res.fetch_id))
+                compact_vintages(series, by_vintage, known, obs_start, res.fetch_id, first_load))
+            first_load = False
         return added
 
-    # -- historique des dates de publication
+    # -- historique des publications et des revisions
     def collect_release_history(self, since: date) -> int:
-        """Reconstitue les dates de publication passees a partir des dates de version
-        ALFRED d'une serie representative par publication. Sert aux backtests : on sait
-        quels jours le CPI, l'emploi ou le PCE sont sortis. L'heure est l'heure usuelle
-        (8 h 30 a New York), marquee 'convention'. Une date de version peut aussi
-        correspondre a une revision annuelle, pas seulement a la publication mensuelle."""
-        events, res = [], None
+        """Reconstitue les evenements passes a partir des versions ALFRED deja stockees
+        d'une serie representative par publication.
+
+        Une version n'est pas une publication par nature. Elle est classee d'apres
+        son contenu :
+        - elle apporte au moins une periode nouvelle -> 'data_release' ;
+        - elle ne fait que modifier des periodes deja publiees -> 'data_revision' ;
+        - c'est la premiere version chargee -> ignoree, sa nature est inconnue.
+        L'heure est l'heure usuelle de la publication, marquee 'estimated'."""
+        events, seen_at = [], iso(now_utc())
         for rid, series_id in RELEASE_SERIES.items():
             series = next(s for s in FRED_SERIES if s.series_id == series_id)
             label, importance = FRED_RELEASES[rid]
-            res = self.http.get("alfred", ALFRED_VINTAGES, params={"seid": series_id}, ext="html")
-            for day in parse_vintage_dates(res.text):
-                if day < since.isoformat():
+            url = f"https://alfred.stlouisfed.org/series?seid={series_id}"
+            for v in self.store.vintages(series_id):
+                day = v["vintage_date"]
+                if day < since.isoformat() or not (v["n_initial"] or v["n_revision"]):
                     continue
-                when = local_to_utc(date.fromisoformat(day), series.release_time_et, ET)
-                events.append(Event(
-                    event_key=f"fred_release|{rid}|{day}", source="alfred", kind="data_release",
-                    title=label, scheduled_at=iso(when), time_basis="convention", importance=importance,
-                    url=f"https://alfred.stlouisfed.org/series?seid={series_id}", fetch_id=res.fetch_id))
-        return self.store.upsert_events(events, iso(res.fetched_at)) if events else 0
+                if v["n_initial"]:
+                    events.append(Event(
+                        event_key=f"fred_release|{rid}|{day}", source="alfred", kind="data_release",
+                        title=label, scheduled_at=v["available_at"], time_basis="estimated",
+                        importance=importance, url=url, fetch_id=v["fetch_id"]))
+                else:
+                    events.append(Event(
+                        event_key=f"alfred_revision|{series_id}|{day}", source="alfred",
+                        kind="data_revision", title=f"Revision sans periode nouvelle : {label}",
+                        scheduled_at=v["available_at"], time_basis="estimated", importance="low",
+                        url=url, fetch_id=v["fetch_id"]))
+        return self.store.upsert_events(events, seen_at) if events else 0
 
     # -- calendrier des publications
     def collect_release_calendar(self, days_back: int = 30, days_ahead: int = 120) -> int:
@@ -229,7 +279,7 @@ class FredConnector(Connector):
                     event_key=f"fred_release|{rid}|{day}", source="fred", kind="data_release",
                     title=label, scheduled_at=iso(local_to_utc(date.fromisoformat(day), t, CT)),
                     # Heure affichee par le calendrier FRED (heure de Chicago). Elle n'est pas
-                    # confirmee par l'organisme emetteur : on la marque comme une convention.
-                    time_basis="convention", importance=importance,
+                    # confirmee par l'organisme emetteur : elle reste marquee comme estimee.
+                    time_basis="estimated", importance=importance,
                     url=f"https://fred.stlouisfed.org/release?rid={rid}", fetch_id=res.fetch_id))
         return self.store.upsert_events(events, seen_at) if events else 0

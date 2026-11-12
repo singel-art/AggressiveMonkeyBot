@@ -23,10 +23,15 @@ class Series:
     # et heure (New York) a laquelle la valeur est consideree connue ce jour-la.
     lag_business_days: int = 1
     available_time_et: time = time(18, 0)
-    # macro : heure usuelle de publication (New York). C'est une convention, pas une mesure.
+    # macro : heure usuelle de publication (New York). C'est une estimation, pas une mesure.
     release_time_et: time = time(8, 30)
     fred_release_id: int | None = None
     max_age_days: int = 7  # au-dela, la valeur est declaree perimee dans le contexte
+
+    @property
+    def frequency(self) -> str:
+        """Periode de reference : 'M' = mois (obs_date = 1er du mois), 'D' = jour."""
+        return "M" if self.kind == "macro" else "D"
 
 
 FRED_SERIES: tuple[Series, ...] = (

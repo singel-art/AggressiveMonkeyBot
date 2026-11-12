@@ -67,11 +67,14 @@ class HttpClient:
             headers: dict | None = None, ext: str = "bin") -> FetchResult:
         return self._request("GET", source, url, params=params, headers=headers, ext=ext)
 
-    def post_json(self, source: str, url: str, payload: dict, *, ext: str = "json") -> FetchResult:
-        return self._request("POST", source, url, json=payload, ext=ext)
+    def post_json(self, source: str, url: str, payload: dict, *, ext: str = "json",
+                  secrets: tuple[str, ...] = ()) -> FetchResult:
+        """`secrets` : valeurs envoyees dans le corps de la requete (cle API). Certaines
+        sources les recopient dans leur reponse : elles sont masquees avant l'archivage."""
+        return self._request("POST", source, url, json=payload, ext=ext, secrets=secrets)
 
     def _request(self, method: str, source: str, url: str, *, params=None, headers=None,
-                 json=None, ext: str = "bin") -> FetchResult:
+                 json=None, ext: str = "bin", secrets: tuple[str, ...] = ()) -> FetchResult:
         prepared = requests.Request(method, url, params=params).prepare()
         safe_url = redact(prepared.url)
         host = urlsplit(url).netloc
@@ -85,7 +88,7 @@ class HttpClient:
                 last_reason = f"{type(exc).__name__}"
             else:
                 if resp.status_code == 200 and resp.content:
-                    return self._archive(source, safe_url, resp, ext)
+                    return self._archive(source, safe_url, resp, ext, secrets)
                 last_reason = f"HTTP {resp.status_code}" if resp.status_code != 200 else "reponse vide"
                 if resp.status_code in _NO_RETRY:
                     break
@@ -95,15 +98,20 @@ class HttpClient:
                              sha256=None, raw_path=None, error=last_reason)
         raise SourceUnavailable(source, safe_url, last_reason)
 
-    def _archive(self, source: str, safe_url: str, resp: requests.Response, ext: str) -> FetchResult:
+    def _archive(self, source: str, safe_url: str, resp: requests.Response, ext: str,
+                 secrets: tuple[str, ...] = ()) -> FetchResult:
         fetched_at = now_utc()
-        digest = hashlib.sha256(resp.content).hexdigest()
+        content = resp.content
+        for secret in secrets:
+            if secret:
+                content = content.replace(secret.encode(), b"***")
+        digest = hashlib.sha256(content).hexdigest()
         folder = self.raw_dir / source / fetched_at.strftime("%Y/%m/%d")
         folder.mkdir(parents=True, exist_ok=True)
         path = folder / f"{fetched_at.strftime('%H%M%S')}_{digest[:12]}.{ext}"
-        path.write_bytes(resp.content)
+        path.write_bytes(content)
         fetch_id = self.store.log_fetch(source=source, url=safe_url, fetched_at=iso(fetched_at),
                                         status=resp.status_code, sha256=digest,
                                         raw_path=str(path), error=None)
         return FetchResult(fetch_id, source, safe_url, fetched_at, resp.status_code,
-                           resp.content, digest, path)
+                           content, digest, path)

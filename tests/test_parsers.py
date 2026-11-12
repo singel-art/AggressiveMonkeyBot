@@ -3,7 +3,7 @@ from datetime import date
 import pytest
 
 from market_intelligence.connectors import bls, cftc, fed, fred
-from market_intelligence.errors import ParseError
+from market_intelligence.errors import ParseError, SourceRefused
 
 
 def test_fredgraph_reads_real_yields(fixture_text):
@@ -25,7 +25,7 @@ def test_alfred_vintage_dates(fixture_text):
 
 
 def test_alfred_keeps_each_version_separate(fixture_text):
-    by_vintage = fred.parse_alfredgraph(fixture_text("alfredgraph_UNRATE.csv"), "UNRATE")
+    by_vintage = fred.parse_alfredgraph(fixture_text("alfredgraph_UNRATE_batch1.csv"), "UNRATE")
     assert dict(by_vintage["2025-12-16"])["2025-11-01"] == 4.6   # premiere publication
     assert dict(by_vintage["2026-01-09"])["2025-11-01"] == 4.5   # revision
     assert "2025-10-01" not in dict(by_vintage["2026-01-09"])    # mois jamais publie : pas de valeur
@@ -69,14 +69,15 @@ def test_h15(fixture_text):
 
 
 def test_bls(fixture_text):
-    parsed = bls.parse_bls(fixture_text("bls_v2.json"))
+    parsed, messages = bls.parse_bls(fixture_text("bls_v2.json"))
+    assert messages == []
     assert dict((m, v) for m, v, _ in parsed["LNS14000000"])["2026-10-01"] == 4.1
     assert dict((m, v) for m, v, _ in parsed["CES0000000001"])["2026-10-01"] == 159293
 
 
-def test_bls_refusal_is_an_error_not_data():
-    with pytest.raises(ParseError):
-        bls.parse_bls('{"status":"REQUEST_NOT_PROCESSED","message":["daily threshold"],"Results":{}}')
+def test_bls_refusal_is_an_error_not_data(fixture_text):
+    with pytest.raises(SourceRefused):
+        bls.parse_bls(fixture_text("bls_v2_quota_reached.json"))
 
 
 def test_cot_gold(fixture_text):

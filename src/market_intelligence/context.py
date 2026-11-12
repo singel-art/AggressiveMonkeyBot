@@ -8,6 +8,8 @@ Regles de surete :
 - une donnee absente ou trop ancienne est marquee 'unavailable' ou 'stale' et
   n'entre dans aucun calcul ;
 - le biais n'est publie que si au moins deux composantes sont exploitables ;
+- une valeur dont l'heure de publication n'est qu'estimee n'entre dans le contexte
+  qu'apres la fin de son jour de publication (borne `available_at_safe`) ;
 - chaque valeur porte sa serie, sa date d'observation, sa date de disponibilite
   et sa source.
 
@@ -28,7 +30,7 @@ from pathlib import Path
 from .catalog import BLS_CROSSCHECK, SERIES_BY_ID
 from .timeutil import iso, now_utc, parse_iso
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 PARAMS = {
     "blackout_minutes_before": 30,
@@ -47,6 +49,14 @@ PARAMS = {
 COT_MAX_AGE_DAYS = 12
 
 
+def _provenance(row) -> dict:
+    """Tout ce qui permet de juger la fiabilite temporelle d'une valeur."""
+    return {"vintage_date": row["vintage_date"], "available_at": row["available_at"],
+            "available_at_safe": row["available_at_safe"], "available_basis": row["available_basis"],
+            "time_quality": row["time_quality"], "release_kind": row["release_kind"],
+            "source": row["source"]}
+
+
 def _metric(store, series_id: str, asof: datetime, *, title: str | None = None,
             max_age_days: int | None = None, lookbacks=(5, 20)) -> dict:
     meta = SERIES_BY_ID.get(series_id)
@@ -59,8 +69,8 @@ def _metric(store, series_id: str, asof: datetime, *, title: str | None = None,
     limit = max_age_days if max_age_days is not None else (meta.max_age_days if meta else 7)
     out.update({
         "value": last["value"], "unit": meta.unit if meta else None, "obs_date": last["obs_date"],
-        "available_at": last["available_at"], "available_basis": last["available_basis"],
-        "source": last["source"], "age_days": age, "max_age_days": limit,
+        **_provenance(last), "frequency": meta.frequency if meta else None,
+        "age_days": age, "max_age_days": limit,
         "status": "ok" if age <= limit else "stale"})
     for n in lookbacks:
         if len(rows) > n:
@@ -86,9 +96,9 @@ def _yoy(store, series_id: str, asof: datetime) -> dict:
     # Un chiffre mensuel porte la date du 1er du mois et parait le mois suivant.
     limit = meta.max_age_days + 31
     return {**base, "value": round((last["value"] / ref["value"] - 1) * 100, 3),
-            "obs_date": last["obs_date"], "available_at": last["available_at"],
-            "available_basis": last["available_basis"], "vintage_date": last["vintage_date"],
-            "source": last["source"], "age_days": age, "max_age_days": limit,
+            "obs_date": last["obs_date"], **_provenance(last),
+            "reference_vintage_date": ref["vintage_date"], "frequency": "M",
+            "age_days": age, "max_age_days": limit,
             "status": "ok" if age <= limit else "stale"}
 
 
@@ -127,7 +137,8 @@ def _events(store, asof: datetime, historical: bool) -> dict:
 
     def brief(e):
         return {k: e[k] for k in ("scheduled_at", "title", "kind", "importance", "time_basis",
-                                  "source", "forecast", "previous", "actual", "url") if e.get(k) is not None}
+                                  "advance_notice", "source", "forecast", "previous", "actual", "url")
+                if e.get(k) is not None}
 
     fresh = store.db.execute(
         "SELECT MAX(fetched_at) m FROM fetch_log WHERE status=200 AND source IN ('fed','fred','mt5_calendar') "
@@ -136,7 +147,7 @@ def _events(store, asof: datetime, historical: bool) -> dict:
     warnings = []
     if "mt5_calendar" not in sources:
         warnings.append("calendrier MT5 non importe : previsions absentes, heures des publications "
-                        "de donnees issues d'une convention")
+                        "de donnees estimees")
     risk = {"params": {k: v for k, v in PARAMS.items() if "risk" in k or "blackout" in k}}
     calendar_ok = True
     if not historical:
