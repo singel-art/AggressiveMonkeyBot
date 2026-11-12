@@ -31,7 +31,7 @@ from .catalog import BLS_CROSSCHECK, FALLBACKS, SERIES_BY_ID
 from .policy import DEFAULT_POLICY, column
 from .timeutil import iso, now_utc, parse_iso
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 PARAMS = {
     "blackout_minutes_before": 30,
@@ -187,9 +187,18 @@ def _gold_market(store, asof: datetime) -> dict:
     return out
 
 
+def _without_duplicates(events: list[dict]) -> list[dict]:
+    """Quand le calendrier MT5 detaille une publication (CPI m/m, CPI a/a...), la ligne
+    de synthese « une par publication » du meme instant fait double emploi : on l'ecarte."""
+    detailed = {e["scheduled_at"] for e in events if e["event_key"].startswith("mt5|")}
+    return [e for e in events
+            if not (e["event_key"].startswith("fred_release|") and e["scheduled_at"] in detailed)]
+
+
 def _events(store, asof: datetime, historical: bool) -> dict:
     a = iso(asof)
-    upcoming = store.events_between(a, iso(asof + timedelta(days=7)), asof=a, min_importance="medium")
+    upcoming = _without_duplicates(
+        store.events_between(a, iso(asof + timedelta(days=7)), asof=a, min_importance="medium"))
     recent_high = store.events_between(iso(asof - timedelta(hours=24)), a, asof=a, min_importance="high")
     horizon = store.events_between(a, iso(asof + timedelta(days=60)), asof=a, min_importance="high")
     next_high = horizon[0] if horizon else None

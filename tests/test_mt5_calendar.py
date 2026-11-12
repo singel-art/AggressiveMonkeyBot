@@ -1,11 +1,10 @@
 """Lecteur des exports du calendrier MT5.
 
-IMPORTANT : aucun export reel de MetaTrader n'etait disponible. Les lignes
-ci-dessous reprennent des valeurs reelles affichees sur la page publique du
-calendrier MQL5 le 2026-11-12 (CPI americain du 10 novembre 2026, decision de la
-Fed du 28 octobre 2026), mises a la main au format de notre script d'export. Les
-identifiants `value_id` et `event_id` sont arbitraires. Ces tests valident le
-lecteur et ses controles, pas le script MQL5.
+Un export reel a ete lu le 2026-11-12 (42 510 lignes, aucune refusee), mais il n'est
+pas versionne. Les lignes ci-dessous sont ecrites a la main, au format de l'export,
+avec les vrais identifiants d'evenement (`event_id`) et les vrais horaires constates
+dans cet export ; les `value_id` sont arbitraires. Les noms sont en francais, comme
+dans le terminal qui a produit l'export.
 """
 from datetime import date
 
@@ -20,10 +19,10 @@ HEADER = ";".join(COLUMNS)
 PCT = "CALENDAR_UNIT_PERCENT/CALENDAR_MULTIPLIER_NONE"
 EXACT = "CALENDAR_TIMEMODE_DATETIME"
 # Serveur a UTC+2 : 15:30 heure serveur = 13:30 UTC.
-CPI_MM = f"1001;840010001;2026.11.10 13:30:00;2026.11.10 15:30:00;7200;{EXACT};USD;3;CPI m/m;0.4;0.5;0.6;;{PCT};CALENDAR_IMPACT_NEGATIVE"
-CORE_CPI = f"1002;840010002;2026.11.10 13:30:00;2026.11.10 15:30:00;7200;{EXACT};USD;3;Core CPI m/m;0.3;0.2;0.3;;{PCT};CALENDAR_IMPACT_POSITIVE"
-CPI_YY_NO_ACTUAL = f"1003;840010003;2026.11.10 13:30:00;2026.11.10 15:30:00;7200;{EXACT};USD;3;CPI y/y;;4.2;3.7;;{PCT};CALENDAR_IMPACT_NA"
-FED = f"1004;840050001;2026.10.28 18:00:00;2026.10.28 20:00:00;7200;{EXACT};USD;3;Fed Interest Rate Decision;4.00;4.00;4.00;;{PCT};CALENDAR_IMPACT_NA"
+CPI_MM = f"1001;840030005;2026.11.10 13:30:00;2026.11.10 15:30:00;7200;{EXACT};USD;3;CPI m/m;0.4;0.5;0.6;;{PCT};CALENDAR_IMPACT_NEGATIVE"
+CORE_CPI = f"1002;840030006;2026.11.10 13:30:00;2026.11.10 15:30:00;7200;{EXACT};USD;3;Core CPI m/m;0.3;0.2;0.3;;{PCT};CALENDAR_IMPACT_POSITIVE"
+CPI_YY_NO_ACTUAL = f"1003;840030007;2026.11.10 13:30:00;2026.11.10 15:30:00;7200;{EXACT};USD;3;CPI y/y;;4.2;3.7;;{PCT};CALENDAR_IMPACT_NA"
+FED = f"1004;840050002;2026.10.28 18:00:00;2026.10.28 20:00:00;7200;{EXACT};USD;3;Déclaration du FOMC;;;;;CALENDAR_UNIT_NONE/CALENDAR_MULTIPLIER_NONE;CALENDAR_IMPACT_NA"
 
 
 def write(tmp_path, *lines, header=HEADER, name="amb_calendar_USD.csv"):
@@ -35,7 +34,7 @@ def write(tmp_path, *lines, header=HEADER, name="amb_calendar_USD.csv"):
 def test_reads_values_times_and_importance(tmp_path):
     events = parse_calendar_csv(write(tmp_path, CPI_MM, CORE_CPI, CPI_YY_NO_ACTUAL))
     cpi = events[0]
-    assert cpi.event_key == "mt5|1001" and cpi.title == "CPI m/m" and cpi.importance == "high"
+    assert cpi.event_key == "mt5|840030005|1001" and cpi.title == "CPI m/m" and cpi.importance == "high"
     assert cpi.scheduled_at == "2026-11-10T13:30:00Z" and cpi.time_basis == "published"
     assert (cpi.actual, cpi.forecast, cpi.previous) == ("0.4 [percent]", "0.5 [percent]", "0.6 [percent]")
     assert cpi.revised_previous is None
@@ -96,7 +95,7 @@ def test_collect_imports_a_consistent_export(store, settings):
     path = write(inbox, CPI_MM, CPI_YY_NO_ACTUAL, FED)
     report = Mt5CalendarConnector(None, store, settings).collect(date(2026, 1, 1))
     assert report.ok and report.events_upserted == 3
-    assert any("recoupees" in n for n in report.notes)
+    assert any("recoupes" in n for n in report.notes)
     assert not path.exists()                                         # deplace dans l'archive brute
     assert len(list((settings.raw_dir / "mt5_calendar").rglob("*.csv"))) == 1
     # Avant l'heure de publication : la prevision est visible, pas le resultat.
@@ -154,8 +153,9 @@ def test_format_sample_file_is_read(store):
     """Fichier d'exemple fabrique a la main au format de l'export (voir l'en-tete de ce module)."""
     from conftest import FIXTURES
     events = parse_calendar_csv(FIXTURES / "mt5_calendar_format_sample.csv")
-    assert len(events) == 5
-    speech = events[-1]
+    assert len(events) == 6
+    assert events[-1].kind == "holiday" and events[-1].title == "Jour de Thanksgiving"
+    speech = events[-2]
     assert speech.time_basis == "estimated" and speech.importance == "medium"
     assert (speech.actual, speech.forecast, speech.previous) == (None, None, None)
     _with_fed_statement(store)

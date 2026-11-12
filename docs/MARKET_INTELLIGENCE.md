@@ -75,8 +75,8 @@ python -m pytest -q
 | World Gold Council | Lecture de trois classeurs déposés à la main, sans réseau. Testée sur des classeurs fabriqués et lue en local sur les vrais fichiers |
 | Politique temporelle `balanced` (marge de 15 minutes) | Appliquée par défaut, testée avec `strict` et `estimate` |
 | Bascule vers les rendements de la Fed | Testée hors réseau. Non observée en conditions réelles : FRED répondait |
-| Calendrier MT5 : script MQL5 | Écrit, jamais compilé ni exécuté : MetaTrader n'est pas disponible dans l'environnement cloud |
-| Calendrier MT5 : lecteur Python | Testé sur le format, jamais sur un export réel |
+| Calendrier MT5 | Export réel du 12 novembre 2026 lu sans ligne refusée ; heures recoupées avec la Fed. L'export n'est pas versionné |
+| Heures réelles de publication | Appliquées aux séries macro et aux rapports de la CFTC à partir du calendrier |
 | Biais macro | Calculé et marqué « non validé ». Ne doit peser dans aucune décision de trading |
 | Lecture du contexte par l'Expert Advisor | À écrire avec l'EA. Le format des fichiers est fixé |
 

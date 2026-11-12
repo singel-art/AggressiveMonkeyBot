@@ -73,6 +73,15 @@ FRED_RELEASES: dict[int, tuple[str, str]] = {
     53: ("Gross Domestic Product", "medium"),
 }
 
+# Identifiants du calendrier MT5. Ils ne dependent pas de la langue du terminal,
+# contrairement aux noms (constate sur l'export reel du 2026-11-12, en francais).
+MT5_FOMC_STATEMENT = "840050002"
+# Publication hebdomadaire des positions sur l'or par la CFTC (valeur : position nette
+# non commerciale du rapport "legacy", en milliers de contrats).
+MT5_CFTC_GOLD = "840520003"
+# Publication FRED -> evenement MT5 representatif, pour recuperer l'heure reelle.
+MT5_RELEASE_EVENTS: dict[int, str] = {10: "840030005", 50: "840030016", 54: "840010003"}
+
 # Source de secours d'une serie FRED : la meme donnee, lue a sa source d'origine
 # (rendements H.15 de la Federal Reserve). Utilisee par le contexte quand la serie
 # FRED est absente, perimee, ou en retard sur la source de secours.

@@ -133,10 +133,10 @@ def test_fed_collect_survives_one_failing_feed(store, settings):
 
 
 def test_cftc_collect_availability_follows_the_friday_release(store, settings):
-    http = FakeHttp(store, [("publicreporting.cftc.gov", "cftc_gold_since_2026-09.json")],
+    http = FakeHttp(store, [("72hh-3qpy", "cftc_gold_since_2026-09.json"), ("6dca-aqww", "cftc_gold_legacy_since_2026-09.json")],
                     now="2026-11-12T09:00:00Z")
     report = CftcConnector(http, store, settings).collect(date(2026, 9, 1))
-    assert report.ok and report.rows_added == 40                    # 10 rapports x 4 series
+    assert report.ok and report.rows_added == 50                    # 10 rapports x 5 series
     old = store.revisions("COT_GOLD_MM_NET", "2026-09-01")[0]       # positions du mardi 1er septembre
     assert old["available_basis"] == "rule" and old["available_at"] == "2026-09-05T19:30:00Z"
     # Les positions du mardi ne sont pas visibles le jeudi suivant.

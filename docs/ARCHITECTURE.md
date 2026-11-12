@@ -36,7 +36,8 @@ est absent ou périmé, il applique sa règle de prudence et continue de gérer 
 | `src/market_intelligence/cli.py` | Commandes `audit`, `collect`, `context`, `asof`, `status` |
 | `mt5/Scripts/AMB_ExportCalendar.mq5` | Exporte le calendrier économique du terminal |
 | `src/market_intelligence/policy.py` | Politique temporelle : `balanced`, `strict`, `estimate` |
-| `tests/` | 116 tests sans appel réseau, sur des réponses réelles enregistrées et des classeurs fabriqués |
+| `src/market_intelligence/release_times.py` | Heures réelles de publication tirées du calendrier MT5, et recoupement avec ALFRED |
+| `tests/` | 127 tests sans appel réseau, sur des réponses réelles enregistrées et des classeurs fabriqués |
 | `.github/workflows/tests.yml` | Intégration continue : tests sous Linux et Windows, Python 3.11 à 3.13 |
 
 Ajouter une source revient à écrire une classe avec deux méthodes, `check()` et `collect(since)`, et à
@@ -62,7 +63,7 @@ Trois colonnes qualifient ces dates :
 | Colonne | Valeurs |
 | --- | --- |
 | `available_basis` | `vintage` (date de version ALFRED), `observed` (instant où notre collecteur a vu la valeur), `rule` (règle prudente appliquée à un historique chargé après coup) |
-| `time_quality` | `observed` (instant mesuré) ou `estimated` (heure supposée) |
+| `time_quality` | `observed` (instant mesuré par notre collecteur), `published` (heure réelle tirée du calendrier MT5) ou `estimated` (heure supposée) |
 | `release_kind` | `initial` (première valeur publiée pour la période), `revision` (valeur modifiée par une version ultérieure), `backfill` (valeur déjà ancienne au premier chargement : on ignore si elle est initiale ou révisée) |
 
 **`events`** : calendrier. `time_basis` vaut `published` quand l'heure vient de la source (communiqués et
@@ -100,8 +101,9 @@ les heures de publication estimées. Elle est appliquée par défaut à toutes l
 | `strict` | Visible à la fin du jour, heure de New York | Mesurer la sensibilité d'un backtest aux heures non vérifiées |
 | `estimate` | Visible à l'heure estimée, sans marge | Analyse seulement |
 
-Un instant réellement observé par notre collecteur n'a pas de marge : il est identique dans les trois
-politiques. La politique se choisit par l'option `--policy` ou la variable `AMB_TEMPORAL_POLICY`.
+Un instant réellement observé par notre collecteur, ou une heure réelle tirée du calendrier MT5, n'a pas de
+marge : il est identique dans les trois politiques. Une fois le calendrier importé, l'heure réelle remplace
+l'estimation ; c'est la seule retouche admise sur une ligne existante, et elle ne touche pas à la valeur. La politique se choisit par l'option `--policy` ou la variable `AMB_TEMPORAL_POLICY`.
 
 Quand la date de publication elle-même est inconnue, aucun horodatage n'est inventé. C'est le cas des
 classeurs du World Gold Council : leurs valeurs ne deviennent visibles qu'à l'instant où le fichier a été
@@ -127,7 +129,7 @@ Lancer le même backtest en `balanced` puis en `strict` mesure l'effet de ce ris
 | Rendements, taux réel, fed funds | Jour ouvré suivant à 18 h (New York) |
 | Indice large du dollar | Cinq jours ouvrés plus tard |
 | Fourchette cible de la Fed | Le jour même à 0 h (New York) |
-| Rapport de la CFTC (positions du mardi) | Samedi suivant à 15 h 30 (New York) |
+| Rapport de la CFTC (positions du mardi) | Samedi suivant à 15 h 30 (New York), remplacé par l'heure réelle de publication quand le calendrier MT5 est importé |
 | BLS | Instant de notre collecte : jamais utilisable avant |
 
 En collecte régulière, ces règles sont remplacées par l'instant réellement observé.
@@ -142,8 +144,11 @@ En collecte régulière, ces règles sont remplacées par l'instant réellement 
 - Les séries du World Gold Council n'ont aucun historique de versions : avant la date de réception du
   premier fichier, elles sont absentes de toute lecture. Elles ne peuvent donc pas servir à un backtest
   portant sur le passé.
-- Les jours fériés ne sont pas connus : la règle des taux quotidiens peut être trop tôt d'un jour ouvré
-  autour d'un férié.
+- Sans calendrier MT5, les jours fériés ne sont pas connus et la règle des taux quotidiens peut être trop tôt
+  d'un jour ouvré. Avec le calendrier, ses 116 jours fériés américains sont pris en compte.
+- La règle du samedi est fausse pour un rapport de la CFTC publié en retard : sur 613 rapports datés par le
+  calendrier, 67 sont sortis plus de trois jours après leur date, jusqu'à 50 jours. Sans calendrier importé,
+  ces rapports seraient vus trop tôt. Avec lui, 5 rapports restent sans correspondance et gardent la règle.
 - L'historique quotidien chargé après coup (36 189 lignes) est la version actuelle des séries. Une révision
   ancienne d'un taux ou de l'indice du dollar serait invisible.
 - Avant la première version chargée (1er janvier 2015 par défaut), aucune donnée macro n'est réputée connue,

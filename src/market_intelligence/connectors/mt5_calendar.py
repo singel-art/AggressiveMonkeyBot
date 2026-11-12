@@ -29,7 +29,9 @@ from collections import Counter
 from datetime import date, datetime
 from pathlib import Path
 
+from ..catalog import MT5_FOMC_STATEMENT
 from ..errors import ParseError
+from ..release_times import apply_cftc_published_times, apply_published_times
 from ..store import Event
 from ..timeutil import UTC, iso, now_utc, parse_iso
 from .base import CheckResult, CollectReport, Connector
@@ -41,7 +43,6 @@ IMPORTANCE = {"3": "high", "2": "medium", "1": "low", "0": "low"}
 EXACT_TIME = "CALENDAR_TIMEMODE_DATETIME"
 TIME_MODES = {EXACT_TIME, "CALENDAR_TIMEMODE_DATE", "CALENDAR_TIMEMODE_NOTIME",
               "CALENDAR_TIMEMODE_TENTATIVE"}
-FED_DECISION_NAME = "Fed Interest Rate Decision"
 
 
 def _mt5_time(text: str, line: int) -> datetime:
@@ -91,8 +92,12 @@ def parse_calendar_csv(path: Path) -> list[Event]:
             values = {f: _number(row[f], line, f) for f in ("actual", "forecast", "previous", "revised_previous")}
             unit = row["unit"].split("/")[0].replace("CALENDAR_UNIT_", "").lower()
             suffix = f" [{unit}]" if unit and unit != "none" else ""
+            # Jour ferie : journee entiere, sans importance attribuee.
+            holiday = row["importance"] == "0" and row["time_mode"] == "CALENDAR_TIMEMODE_DATE"
             events.append(Event(
-                event_key=f"mt5|{row['value_id']}", source="mt5_calendar", kind="data_release",
+                # L'identifiant d'evenement, stable d'une langue a l'autre, fait partie de la cle.
+                event_key=f"mt5|{row['event_id']}|{row['value_id']}", source="mt5_calendar",
+                kind="holiday" if holiday else "data_release",
                 title=row["name"].strip(), scheduled_at=iso(when),
                 time_basis="published" if row["time_mode"] == EXACT_TIME else "estimated",
                 importance=IMPORTANCE[row["importance"]], currency=row["currency"] or None,
@@ -101,8 +106,9 @@ def parse_calendar_csv(path: Path) -> list[Event]:
 
 
 def check_times_against_fed(events: list[Event], store) -> dict:
-    """Recoupe l'heure des decisions de la Fed de l'export avec l'heure reelle des
-    communiques du FOMC deja stockes (source : flux de la Fed, heure publiee).
+    """Recoupe l'heure des communiques du FOMC de l'export avec leur heure reelle deja
+    stockee (source : flux de la Fed, heure publiee). L'evenement est reconnu par son
+    identifiant MT5, pas par son nom, qui change avec la langue du terminal.
 
     Renvoie {'compared': n, 'offsets_minutes': {ecart: nombre}}. Un ecart non nul
     (typiquement 60 ou -60) revele une conversion d'heure fausse dans l'export."""
@@ -112,7 +118,7 @@ def check_times_against_fed(events: list[Event], store) -> dict:
     offsets: Counter = Counter()
     for e in events:
         day = e.scheduled_at[:10]
-        if e.title == FED_DECISION_NAME and day in statements:
+        if e.event_key.startswith(f"mt5|{MT5_FOMC_STATEMENT}|") and day in statements:
             offsets[round((parse_iso(e.scheduled_at) - statements[day]).total_seconds() / 60)] += 1
     return {"compared": sum(offsets.values()), "offsets_minutes": dict(sorted(offsets.items()))}
 
@@ -149,10 +155,10 @@ class Mt5CalendarConnector(Connector):
                     f"(ecart en minutes -> nombre : {bad}) ; fichier laisse en place, rien n'est importe")
                 continue
             if control["compared"] == 0:
-                report.notes.append(f"{path.name}: heures non recoupees (aucune decision de la Fed "
-                                    "commune avec le stockage) ; a verifier a la main")
+                report.notes.append(f"{path.name}: heures non recoupees (aucun communique du FOMC "
+                                    "commun avec le stockage : lancer d'abord la collecte `fed`)")
             else:
-                report.notes.append(f"{path.name}: {control['compared']} decisions de la Fed recoupees, "
+                report.notes.append(f"{path.name}: {control['compared']} communiques du FOMC recoupes, "
                                     "heures identiques")
             target = self.settings.raw_dir / "mt5_calendar" / now.strftime("%Y/%m/%d") / f"{digest[:12]}_{path.name}"
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -164,4 +170,14 @@ class Mt5CalendarConnector(Connector):
                 [Event(**{**e.__dict__, "fetch_id": fetch_id}) for e in events], iso(now))
         if not report.events_upserted and not report.errors:
             report.notes.append("aucun export a importer")
+        elif report.events_upserted:
+            refined = apply_published_times(self.store)
+            cot = apply_cftc_published_times(self.store)
+            if cot["matched"] or cot["unmatched"]:
+                report.notes.append(f"rapports CFTC dates par leur publication reelle : {cot['matched']} ; "
+                                    f"sans correspondance : {cot['unmatched']}")
+            report.notes.append(f"heures reelles appliquees : {refined['rows_refined']} lignes de series, "
+                                f"{refined['releases_matched']} publications ; "
+                                f"{len(refined['earlier_than_estimate'])} heure(s) anterieure(s) a "
+                                "l'estimation, laissee(s) de cote par prudence")
         return report

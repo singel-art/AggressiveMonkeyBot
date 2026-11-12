@@ -214,11 +214,12 @@ class FedConnector(Connector):
         for series_id, points in parse_h15(res.text).items():
             known = self.store.latest_values(series_id)
             first_load = not known
+            holidays = self.store.holidays()
             for obs_date, value in points:
                 if obs_date in known:
                     continue
                 # Le H.15 publie la valeur d'un jour le jour ouvre suivant vers 16 h 15 (New York).
-                rule = local_to_utc(add_business_days(date.fromisoformat(obs_date), 1), time(18, 0), ET)
+                rule = local_to_utc(add_business_days(date.fromisoformat(obs_date), 1, holidays), time(18, 0), ET)
                 available, basis, quality = availability(rule, res.fetched_at)
                 kind = "initial" if basis == "observed" and not first_load else "backfill"
                 rows.append(Observation(series_id, obs_date, available[:10], value, available,

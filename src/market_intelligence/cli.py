@@ -6,6 +6,7 @@
     python -m market_intelligence context --asof 2025-12-17T15:00:00Z
     python -m market_intelligence asof UNRATE 2025-12-20
     python -m market_intelligence status
+    python -m market_intelligence verify                recoupe ALFRED et le calendrier MT5
 """
 from __future__ import annotations
 
@@ -20,6 +21,7 @@ from .connectors.base import CheckResult, CollectReport
 from .context import build_context, write_context
 from .http import HttpClient
 from .policy import COLUMNS
+from .release_times import consistency_report
 from .store import SchemaMismatch, Store
 from .timeutil import iso, now_utc, parse_iso
 
@@ -108,6 +110,13 @@ def cmd_asof(args) -> int:
     return 0
 
 
+def cmd_verify(args) -> int:
+    """Recoupe les dates de publication ALFRED avec le calendrier MT5."""
+    _, store, _ = _open(args)
+    print(json.dumps(consistency_report(store), ensure_ascii=False, indent=2))
+    return 0
+
+
 def cmd_status(args) -> int:
     _, store, _ = _open(args)
     print("Series :")
@@ -144,6 +153,7 @@ def main(argv=None) -> int:
     p.add_argument("--policy", choices=list(COLUMNS), help="politique temporelle (defaut : balanced)")
     p.set_defaults(func=cmd_asof)
     sub.add_parser("status").set_defaults(func=cmd_status)
+    sub.add_parser("verify").set_defaults(func=cmd_verify)
     args = parser.parse_args(argv)
     try:
         return args.func(args)

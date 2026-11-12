@@ -7,9 +7,43 @@ prévision, la valeur publiée et la valeur précédente révisée.
 
 | Élément | État |
 | --- | --- |
-| Script `mt5/Scripts/AMB_ExportCalendar.mq5` (version 1.20) | Écrit, relu contre la documentation MQL5 et vérifié statiquement (voir plus bas). **Jamais compilé ni exécuté** : aucun terminal MT5 n'est disponible |
-| Lecteur Python `mt5_calendar` | Testé hors réseau sur des lignes et un fichier d'exemple au format de l'export. **Jamais essayé sur un export réel** |
-| Compilation, exécution, premier export | **En attente** : à faire quand vous aurez de nouveau accès à MetaTrader 5 |
+| Script `mt5/Scripts/AMB_ExportCalendar.mq5` (version 1.20) | Compilé et exécuté par l'utilisateur : un export réel a été reçu le 12 novembre 2026. Je n'ai pas assisté à la compilation |
+| Lecteur Python `mt5_calendar` | Testé hors réseau, et essayé sur l'export réel : 42 510 lignes lues, aucune refusée |
+| Export réel du 12 novembre 2026 | Importé en local. Il n'est pas versionné : il reste dans `data/` |
+
+## Ce que l'export réel a montré
+
+Export du 12 novembre 2026 : 42 510 lignes, du 1er janvier 2015 au 10 février 2027, terminal en français.
+
+| Constat | Détail |
+| --- | --- |
+| Heures correctes | 90 communiqués du FOMC comparés aux heures publiées par la Fed : 90 identiques, été comme hiver |
+| Noms traduits | Les événements portent des noms français. Ils sont donc reconnus par leur identifiant (`event_id`), jamais par leur nom |
+| Dates de publication | Emploi : 141 sur 141 identiques à ALFRED. CPI : 140 communes, 1 côté ALFRED seulement (18 décembre 2025). PCE : 139 sur 139 |
+| Heure de 8 h 30 fausse pour le PCE | 11 publications à 10 h, heure de New York. L'heure réelle remplace désormais l'estimation |
+| 3 heures douteuses | Emploi du 20 novembre 2025, PCE des 26 janvier et 29 février 2024 : indiqués à 7 h 30. L'heure estimée, plus tardive, est conservée |
+| Prévisions | Aucune avant mai 2017. Ensuite, environ 85 % des événements majeurs en ont une. Jamais pour la décision de taux de la Fed |
+| Jours fériés | 116 jours fériés américains, utilisés pour la règle des jours ouvrés |
+| Positions de la CFTC | 623 publications hebdomadaires pour l'or, avec leur heure réelle |
+
+## Ce que l'import fait des heures réelles
+
+- Les lignes des séries CPI, PCE, emploi et chômage publiées un jour couvert par le calendrier passent de
+  l'heure estimée à l'heure réelle (`time_quality = published`), sans marge. Sur la base du 12 novembre 2026 :
+  5 015 lignes sur 5 904.
+- Les rapports de la CFTC sont appariés à leur publication par la valeur (position nette non commerciale,
+  au dixième de millier de contrats près) : 613 rapports sur 618. Les 5 autres gardent la règle du samedi.
+- Une heure réelle antérieure à l'estimation n'est jamais appliquée.
+- Dans le contexte, la ligne de synthèse d'une publication est masquée quand le calendrier la détaille.
+
+Après une reconstruction de la base, redéposer l'export dans `data/inbox/mt5_calendar/` : la commande
+`collect` traite la Fed, puis le calendrier, puis FRED, dans cet ordre.
+
+```bash
+python -m market_intelligence verify
+```
+
+Cette commande recoupe les dates de publication d'ALFRED avec celles du calendrier.
 
 ## Vérifications statiques faites sans MetaTrader
 
@@ -24,15 +58,13 @@ prévision, la valeur publiée et la valeur précédente révisée.
 Ces vérifications ne remplacent pas une compilation : une erreur de type ou de syntaxe propre à MQL5 peut
 subsister.
 
-## Tests restant à faire sur un export réel
+## Points encore ouverts
 
-1. Compilation sans erreur ni avertissement dans MetaEditor.
-2. Exécution complète sans erreur 5400 ou 5401 sur la période 2015 à aujourd'hui.
-3. Lecture du fichier par le connecteur, sans ligne refusée.
-4. Recoupement des heures avec les communiqués de la Fed, sur toutes les saisons.
-5. Nom exact de l'événement « Fed Interest Rate Decision » dans votre terminal.
-6. Présence des prévisions sur les statistiques majeures, et profondeur réelle de l'historique.
-7. Encodage du fichier et noms d'événements contenant des caractères non ASCII.
+1. Avertissements éventuels du compilateur : à me transmettre si MetaEditor en affiche.
+2. Les 3 heures douteuses de 7 h 30 : à confirmer ou infirmer auprès d'une autre source.
+3. Un export fait sur un terminal dans une autre langue ou chez un autre broker n'a pas été essayé.
+4. Les prévisions exportées sont celles que le terminal conserve aujourd'hui ; rien ne garantit qu'elles
+   n'ont pas été modifiées entre leur annonce et la publication.
 
 ## Étapes à réaliser sur votre PC
 
@@ -60,7 +92,7 @@ Le connecteur `fed` doit tourner avant : il fournit les heures de référence du
 | En-tête identique aux 15 colonnes attendues | Fichier refusé |
 | Identifiants numériques et uniques, dates lisibles, nombres valides | Fichier refusé, avec le numéro de ligne |
 | Cohérence entre `time_utc`, `time_server` et `utc_offset_s` | Fichier refusé |
-| Heure des décisions de la Fed comparée aux communiqués datés de la Fed | Fichier refusé si un écart existe |
+| Heure des communiqués du FOMC (identifiant 840050002) comparée aux heures publiées par la Fed | Fichier refusé si un écart existe |
 
 Un fichier refusé reste dans `data\inbox\mt5_calendar\` et rien n'est importé.
 
@@ -87,5 +119,3 @@ Une valeur absente est écrite vide et reste absente à l'import. Une heure n'es
 - Le calendrier n'est pas disponible dans le Strategy Tester : c'est la raison de cet export.
 - Les prévisions exportées sont celles que le terminal conserve aujourd'hui. Rien ne garantit qu'une
   prévision n'a pas été modifiée entre son annonce et la publication.
-- Le nom « Fed Interest Rate Decision » utilisé pour le recoupement vient du calendrier public MQL5. S'il
-  diffère dans votre terminal, le contrôle signalera « heures non recoupées ».

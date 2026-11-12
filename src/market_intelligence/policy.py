@@ -39,7 +39,8 @@ def column(policy: str) -> str:
 
 def bounds(available_at: str, time_quality: str) -> tuple[str, str]:
     """(instant 'balanced', instant 'strict') pour une disponibilite donnee."""
-    if time_quality == "observed":
+    if time_quality in ("observed", "published"):
+        # Instant mesure par notre collecteur, ou heure publiee par une source : pas de marge.
         return available_at, available_at
     moment: datetime = parse_iso(available_at)
     local_day = moment.astimezone(ET).date()

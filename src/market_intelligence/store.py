@@ -21,7 +21,9 @@ Les notions suivantes sont tenues separees pour chaque ligne :
 - 'observed' : instant ou notre collecteur a vu la valeur pour la premiere fois ;
 - 'rule'     : regle prudente appliquee a un historique recupere apres coup.
 
-`time_quality` : 'observed' (instant mesure) ou 'estimated' (heure supposee).
+`time_quality` : 'observed' (instant mesure par notre collecteur), 'published'
+(heure reelle fournie par une source, ici le calendrier MT5) ou 'estimated'
+(heure supposee).
 
 `release_kind` :
 - 'initial'  : premiere valeur publiee pour cette periode ;
@@ -59,7 +61,7 @@ CREATE TABLE IF NOT EXISTS observations (
     available_at_balanced TEXT NOT NULL CHECK (available_at_balanced >= available_at),
     available_at_strict   TEXT NOT NULL CHECK (available_at_strict >= available_at_balanced),
     available_basis   TEXT NOT NULL CHECK (available_basis IN ('vintage','observed','rule')),
-    time_quality      TEXT NOT NULL CHECK (time_quality IN ('observed','estimated')),
+    time_quality      TEXT NOT NULL CHECK (time_quality IN ('observed','estimated','published')),
     release_kind      TEXT NOT NULL CHECK (release_kind IN ('initial','revision','backfill')),
     source            TEXT NOT NULL,
     fetch_id          INTEGER REFERENCES fetch_log(fetch_id),
@@ -89,7 +91,7 @@ CREATE INDEX IF NOT EXISTS idx_events_time ON events(scheduled_at);
 """
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class SchemaMismatch(Exception):
@@ -248,6 +250,35 @@ class Store:
         return self.db.execute(
             "SELECT * FROM observations WHERE series_id=? AND obs_date=? ORDER BY available_at",
             (series_id, obs_date)).fetchall()
+
+    def refine_availability(self, series_id: str, vintage_date: str, published_at: str) -> int:
+        """Remplace l'heure ESTIMEE d'une version par l'heure reelle de sa publication.
+        Seule retouche admise sur une ligne existante : la valeur, la periode et la
+        version ne changent pas, et une heure deja observee ou publiee n'est jamais touchee."""
+        balanced, strict = bounds(published_at, "published")
+        cur = self.db.execute(
+            """UPDATE observations SET available_at=?, available_at_balanced=?, available_at_strict=?,
+                      time_quality='published'
+               WHERE series_id=? AND vintage_date=? AND available_basis='vintage' AND time_quality='estimated'""",
+            (published_at, balanced, strict, series_id, vintage_date))
+        self.db.commit()
+        return cur.rowcount
+
+    def refine_rule_availability(self, series_id: str, obs_date: str, published_at: str) -> int:
+        """Meme principe pour une ligne d'historique datee par une regle : l'heure reelle
+        de publication, quand elle est etablie, remplace l'estimation."""
+        cur = self.db.execute(
+            """UPDATE observations SET available_at=?, available_at_balanced=?, available_at_strict=?,
+                      time_quality='published'
+               WHERE series_id=? AND obs_date=? AND available_basis='rule' AND time_quality='estimated'""",
+            (published_at, published_at, published_at, series_id, obs_date))
+        self.db.commit()
+        return cur.rowcount
+
+    def holidays(self) -> frozenset[str]:
+        """Jours feries connus (calendrier MT5), en dates ISO."""
+        return frozenset(r[0][:10] for r in self.db.execute(
+            "SELECT scheduled_at FROM events WHERE kind='holiday'"))
 
     def series_summary(self) -> list[sqlite3.Row]:
         return self.db.execute(

@@ -23,6 +23,7 @@ from ..catalog import FRED_RELEASES, FRED_SERIES, Series
 from ..errors import ParseError, SourceUnavailable
 from ..store import Event, Observation, release_kind
 from ..timeutil import CT, ET, add_business_days, iso, local_to_utc, now_utc
+from ..release_times import apply_published_times
 from .base import CheckResult, CollectReport, Connector
 
 FREDGRAPH = "https://fred.stlouisfed.org/graph/fredgraph.csv"
@@ -93,8 +94,8 @@ def parse_release_calendar(html: str) -> list[tuple[str, str, int]]:
 
 
 # ------------------------------------------------------- regles de disponibilite
-def market_rule_time(series: Series, obs_date: str) -> datetime:
-    d = add_business_days(date.fromisoformat(obs_date), series.lag_business_days)
+def market_rule_time(series: Series, obs_date: str, holidays: frozenset[str] = frozenset()) -> datetime:
+    d = add_business_days(date.fromisoformat(obs_date), series.lag_business_days, holidays)
     return local_to_utc(d, series.available_time_et, ET)
 
 
@@ -107,9 +108,10 @@ def availability(rule: datetime, fetched_at: datetime) -> tuple[str, str, str]:
     return iso(rule), "rule", "estimated"
 
 
-def market_availability(series: Series, obs_date: str, fetched_at: datetime) -> tuple[str, str, str]:
+def market_availability(series: Series, obs_date: str, fetched_at: datetime,
+                        holidays: frozenset[str] = frozenset()) -> tuple[str, str, str]:
     """Instant a partir duquel une valeur quotidienne est tenue pour connue."""
-    return availability(market_rule_time(series, obs_date), fetched_at)
+    return availability(market_rule_time(series, obs_date, holidays), fetched_at)
 
 
 def vintage_time(series: Series, vintage: str) -> str:
@@ -170,6 +172,11 @@ class FredConnector(Connector):
             report.events_upserted += self.collect_release_calendar()
         except (SourceUnavailable, ParseError) as exc:
             report.errors.append(f"calendrier: {exc}")
+        # Si le calendrier MT5 a ete importe, ses heures reelles remplacent les estimations.
+        refined = apply_published_times(self.store)
+        if refined["releases_matched"]:
+            report.notes.append(f"heures reelles du calendrier MT5 : {refined['rows_refined']} lignes et "
+                                f"{refined['releases_matched']} publications datees")
         return report
 
     # -- series quotidiennes
@@ -177,10 +184,11 @@ class FredConnector(Connector):
         res = self.http.get("fred", FREDGRAPH, params={"id": series.series_id, "cosd": since.isoformat()}, ext="csv")
         known = self.store.latest_values(series.series_id)
         first_load = not known
+        holidays = self.store.holidays()
         rows = []
         for obs_date, value in parse_fredgraph(res.text):
             if obs_date not in known:
-                available, basis, quality = market_availability(series, obs_date, res.fetched_at)
+                available, basis, quality = market_availability(series, obs_date, res.fetched_at, holidays)
                 # Une valeur d'historique recuperee apres coup peut avoir ete revisee
                 # depuis sa parution : elle n'est pas presentee comme initiale.
                 kind = "initial" if basis == "observed" and not first_load else "backfill"
