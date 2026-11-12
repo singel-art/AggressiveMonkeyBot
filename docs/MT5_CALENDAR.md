@@ -7,9 +7,32 @@ prévision, la valeur publiée et la valeur précédente révisée.
 
 | Élément | État |
 | --- | --- |
-| Script `mt5/Scripts/AMB_ExportCalendar.mq5` | Écrit et relu contre la documentation MQL5. **Jamais compilé ni exécuté** : aucun terminal MT5 n'est disponible dans l'environnement cloud |
-| Lecteur Python `mt5_calendar` | Testé hors réseau sur des lignes au format de l'export. **Jamais essayé sur un export réel** |
-| Compilation, exécution, premier export | **À faire par vous**, sur votre PC |
+| Script `mt5/Scripts/AMB_ExportCalendar.mq5` (version 1.20) | Écrit, relu contre la documentation MQL5 et vérifié statiquement (voir plus bas). **Jamais compilé ni exécuté** : aucun terminal MT5 n'est disponible |
+| Lecteur Python `mt5_calendar` | Testé hors réseau sur des lignes et un fichier d'exemple au format de l'export. **Jamais essayé sur un export réel** |
+| Compilation, exécution, premier export | **En attente** : à faire quand vous aurez de nouveau accès à MetaTrader 5 |
+
+## Vérifications statiques faites sans MetaTrader
+
+- Accolades, parenthèses et crochets équilibrés.
+- Seules les fonctions et les champs du calendrier relus dans la documentation MQL5 sont utilisés.
+- Une valeur absente est toujours écrite vide, jamais remplacée par un nombre.
+- L'en-tête écrit par le script est exactement celui que le lecteur attend.
+- Corrections issues de la relecture : directive `#property strict` retirée (propre à MQL4) ; lecture par
+  tranches d'un an au lieu d'une demande unique sur onze ans, qui risquait de dépasser le délai du
+  calendrier ; export annulé si le terminal n'est pas connecté ; fichier partiel supprimé en cas d'échec.
+
+Ces vérifications ne remplacent pas une compilation : une erreur de type ou de syntaxe propre à MQL5 peut
+subsister.
+
+## Tests restant à faire sur un export réel
+
+1. Compilation sans erreur ni avertissement dans MetaEditor.
+2. Exécution complète sans erreur 5400 ou 5401 sur la période 2015 à aujourd'hui.
+3. Lecture du fichier par le connecteur, sans ligne refusée.
+4. Recoupement des heures avec les communiqués de la Fed, sur toutes les saisons.
+5. Nom exact de l'événement « Fed Interest Rate Decision » dans votre terminal.
+6. Présence des prévisions sur les statistiques majeures, et profondeur réelle de l'historique.
+7. Encodage du fichier et noms d'événements contenant des caractères non ASCII.
 
 ## Étapes à réaliser sur votre PC
 

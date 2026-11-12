@@ -31,11 +31,12 @@ est absent ou périmé, il applique sa règle de prudence et continue de gérer 
 | `src/market_intelligence/http.py` | Client HTTP commun : essais répétés, délai entre appels, archivage de chaque réponse, journal de chaque appel, secrets expurgés |
 | `src/market_intelligence/store.py` | Stockage SQLite : observations versionnées, événements, journal des collectes, requêtes « tel que connu à l'instant t » |
 | `src/market_intelligence/catalog.py` | Liste des séries suivies, avec leur règle de disponibilité et leur durée de validité |
-| `src/market_intelligence/connectors/` | Un fichier par source : `fred`, `fed`, `bls`, `cftc`, `wgc`, `mt5_calendar` |
+| `src/market_intelligence/connectors/` | Un fichier par source : `fred`, `fed`, `bls`, `cftc`, `wgc` (sans réseau), `mt5_calendar` (sans réseau) |
 | `src/market_intelligence/context.py` | Construit le contexte à un instant donné et écrit les fichiers pour l'EA |
 | `src/market_intelligence/cli.py` | Commandes `audit`, `collect`, `context`, `asof`, `status` |
 | `mt5/Scripts/AMB_ExportCalendar.mq5` | Exporte le calendrier économique du terminal |
-| `tests/` | 84 tests sur des réponses réelles enregistrées, sans appel réseau |
+| `src/market_intelligence/policy.py` | Politique temporelle : `balanced`, `strict`, `estimate` |
+| `tests/` | 116 tests sans appel réseau, sur des réponses réelles enregistrées et des classeurs fabriqués |
 | `.github/workflows/tests.yml` | Intégration continue : tests sous Linux et Windows, Python 3.11 à 3.13 |
 
 Ajouter une source revient à écrire une classe avec deux méthodes, `check()` et `collect(since)`, et à
@@ -53,7 +54,8 @@ Quatre notions sont tenues séparées :
 | `obs_date` | **Période économique** mesurée : le jour, ou le 1er du mois pour une série mensuelle |
 | `vintage_date` | **Date de la version** dans la source |
 | `available_at` | **Meilleure estimation** de l'instant où le chiffre a été connu |
-| `available_at_safe` | **Borne sûre** : instant à partir duquel un backtest a le droit de voir le chiffre |
+| `available_at_balanced` | Instant de visibilité selon la **politique du projet** : estimation + 15 minutes si l'heure est estimée, instant observé tel quel sinon |
+| `available_at_strict` | **Borne tardive** : fin du jour à New York si l'heure n'est qu'estimée |
 
 Trois colonnes qualifient ces dates :
 
@@ -87,17 +89,27 @@ Une base créée avant ce schéma est refusée au démarrage, avec la consigne d
   importance. Sur les données réelles depuis 2015, 10 versions sont dans ce second cas (8 pour le CPI, dont
   la révision annuelle de février, 1 pour l'emploi, 1 pour le PCE).
 
-### Heures estimées
+### Politique temporelle
 
-L'heure d'une version ALFRED (8 h 30 à New York) est une estimation non vérifiée. Deux lectures existent :
+Décision du projet du 12 novembre 2026 : politique `balanced`, avec une marge de sécurité de 15 minutes sur
+les heures de publication estimées. Elle est appliquée par défaut à toutes les lectures et au contexte.
 
-| Lecture | Règle | Usage |
+| Politique | Règle pour une heure estimée | Usage |
 | --- | --- | --- |
-| Prudente, par défaut | Le chiffre n'est visible qu'à `available_at_safe`, soit la fin du jour de la version à New York | Backtests, contexte |
-| Estimée, sur demande (`safe=False`, option `--estimated`) | Le chiffre est visible à l'heure supposée | Analyse seulement |
+| `balanced` (défaut) | Visible 15 minutes après l'heure estimée | Backtests, contexte |
+| `strict` | Visible à la fin du jour, heure de New York | Mesurer la sensibilité d'un backtest aux heures non vérifiées |
+| `estimate` | Visible à l'heure estimée, sans marge | Analyse seulement |
 
-Conséquence assumée : le jour d'une publication, le contexte garde l'ancien chiffre jusqu'au lendemain.
-C'est le prix à payer tant que les heures réelles ne sont pas importées du calendrier MT5.
+Un instant réellement observé par notre collecteur n'a pas de marge : il est identique dans les trois
+politiques. La politique se choisit par l'option `--policy` ou la variable `AMB_TEMPORAL_POLICY`.
+
+Quand la date de publication elle-même est inconnue, aucun horodatage n'est inventé. C'est le cas des
+classeurs du World Gold Council : leurs valeurs ne deviennent visibles qu'à l'instant où le fichier a été
+reçu, et le contexte les marque `publication_time: unknown`.
+
+Limite de `balanced`, à garder en tête : la marge couvre un retard de quelques minutes, pas une heure de
+publication fausse. Une statistique supposée à 8 h 30 mais sortie à 10 h serait vue 75 minutes trop tôt.
+Lancer le même backtest en `balanced` puis en `strict` mesure l'effet de ce risque.
 
 ### Événements
 
@@ -122,11 +134,14 @@ En collecte régulière, ces règles sont remplacées par l'instant réellement 
 
 ### Limites connues
 
-- L'heure de 8 h 30 reste une estimation pour les événements du calendrier. Si une publication a eu lieu à
-  une autre heure, la fenêtre de blocage autour de l'annonce est mal placée. Un seul recoupement a été fait :
+- L'heure de 8 h 30 reste une estimation. Si une publication a eu lieu plus tard, la politique `balanced`
+  la rend visible trop tôt et la fenêtre de blocage autour de l'annonce est mal placée. Un seul recoupement a été fait :
   le CPI du 10 novembre 2026 figure à 13 h 30 UTC sur le calendrier public MQL5, comme l'estimation.
 - Une date de version ALFRED peut être postérieure à la publication officielle. L'erreur va alors dans le
   sens prudent pour les valeurs, mais place l'événement au mauvais jour.
+- Les séries du World Gold Council n'ont aucun historique de versions : avant la date de réception du
+  premier fichier, elles sont absentes de toute lecture. Elles ne peuvent donc pas servir à un backtest
+  portant sur le passé.
 - Les jours fériés ne sont pas connus : la règle des taux quotidiens peut être trop tôt d'un jour ouvré
   autour d'un férié.
 - L'historique quotidien chargé après coup (36 189 lignes) est la version actuelle des séries. Une révision
@@ -147,7 +162,8 @@ En collecte régulière, ces règles sont remplacées par l'instant réellement 
 | `risk_level` | `normal`, `elevated` (moins de 24 h avant un événement majeur), `high` (moins de 4 h), `blackout` (30 minutes avant ou après), `unknown` |
 | `next_high_impact_epoch`, `_title`, `_time_basis` | Prochain événement majeur |
 | `gold_macro_bias`, `_score`, `_validated` | `bullish`, `bearish`, `neutral` ou `unavailable` ; `_validated` vaut 0 |
-| `us10y_*`, `us2y_*`, `real10y_*`, `broad_index_*` | Niveau et variations sur 5 et 20 observations |
+| `temporal_policy` | Politique appliquée au contexte |
+| `us10y_*`, `us2y_*`, `real10y_*`, `broad_index_*` | Niveau et variations sur 5 et 20 observations. La colonne `source` indique `fed_h15` quand la bascule a joué |
 
 `events_mt5.csv` liste les événements des sept prochains jours avec leur heure Unix. L'EA peut ainsi
 calculer lui-même ses fenêtres de blocage à chaque tick, sans dépendre du rythme de Python.
@@ -172,8 +188,9 @@ Les fichiers sont écrits dans un fichier temporaire puis renommés : l'EA ne li
 - Le biais n'est publié que si deux composantes au moins sont exploitables.
 - Si le calendrier n'a pas été rafraîchi depuis 48 heures, `risk_level` passe à `unknown`.
 - Une réponse de refus (quota, clé invalide) est distinguée d'une panne et signalée telle quelle.
-- Les rendements du H.15 de la Fed sont stockés en double des séries FRED, pour disposer d'une source
-  de secours. La bascule automatique entre les deux reste à écrire.
+- Les rendements du H.15 de la Fed sont stockés en double des séries FRED. Le contexte bascule sur eux pour
+  les taux à 10 ans et à 2 ans quand la série FRED est absente, périmée, ou en retard sur la Fed. Le
+  remplacement est toujours déclaré (`fallback`), et la source réelle figure dans le fichier lu par l'EA.
 
 ## Le biais macro
 

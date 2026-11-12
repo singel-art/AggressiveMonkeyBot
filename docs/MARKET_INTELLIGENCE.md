@@ -58,6 +58,7 @@ python -m pytest -q
 
 - `MONKEY_ENVIRONMENT.md` : règles du projet.
 - `docs/MT5_CALENDAR.md` : compilation, export et validation du calendrier MT5.
+- `docs/WGC.md` : formats acceptés, colonnes attendues et règles d'usage des fichiers WGC.
 - `docs/SOURCES.md` : audit des sources, accès, coûts et limites.
 - `docs/API_KEYS.md` : clés et comptes, et où les placer.
 - `docs/ARCHITECTURE.md` : organisation, modèle de données, prévention du look-ahead, fichiers produits
@@ -71,7 +72,9 @@ python -m pytest -q
 | Connecteur BLS | Sans clé : a fonctionné puis quota journalier atteint. Avec clé : testé hors réseau seulement |
 | Stockage point-in-time : publications initiales, révisions, borne sûre | Testé sur de vraies révisions, avec des tests anti-look-ahead dédiés |
 | Génération du contexte, en direct et à une date passée | Testée |
-| World Gold Council | Archivage des fichiers déposés à la main. Lecture des colonnes à écrire sur un vrai fichier |
+| World Gold Council | Lecture de trois classeurs déposés à la main, sans réseau. Testée sur des classeurs fabriqués et lue en local sur les vrais fichiers |
+| Politique temporelle `balanced` (marge de 15 minutes) | Appliquée par défaut, testée avec `strict` et `estimate` |
+| Bascule vers les rendements de la Fed | Testée hors réseau. Non observée en conditions réelles : FRED répondait |
 | Calendrier MT5 : script MQL5 | Écrit, jamais compilé ni exécuté : MetaTrader n'est pas disponible dans l'environnement cloud |
 | Calendrier MT5 : lecteur Python | Testé sur le format, jamais sur un export réel |
 | Biais macro | Calculé et marqué « non validé ». Ne doit peser dans aucune décision de trading |

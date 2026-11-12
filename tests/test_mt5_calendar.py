@@ -132,3 +132,69 @@ def test_export_script_writes_the_columns_the_reader_expects():
     from conftest import ROOT
     script = (ROOT / "mt5" / "Scripts" / "AMB_ExportCalendar.mq5").read_text(encoding="utf-8")
     assert f'"{HEADER}\\n"' in script
+
+
+# --------------------------------------------------------------------------
+# Fichier d'exemple au format de l'export et verifications statiques du script
+# --------------------------------------------------------------------------
+def _script():
+    from conftest import ROOT
+    return (ROOT / "mt5" / "Scripts" / "AMB_ExportCalendar.mq5").read_text(encoding="utf-8")
+
+
+def _code_only(text):
+    """Retire commentaires, chaines et litteraux caractere pour ne garder que le code."""
+    import re
+    text = re.sub(r"//[^\n]*", "", text)
+    text = re.sub(r'"(?:\\.|[^"\\])*"', '""', text)
+    return re.sub(r"'(?:\\.|[^'\\])*'", "''", text)
+
+
+def test_format_sample_file_is_read(store):
+    """Fichier d'exemple fabrique a la main au format de l'export (voir l'en-tete de ce module)."""
+    from conftest import FIXTURES
+    events = parse_calendar_csv(FIXTURES / "mt5_calendar_format_sample.csv")
+    assert len(events) == 5
+    speech = events[-1]
+    assert speech.time_basis == "estimated" and speech.importance == "medium"
+    assert (speech.actual, speech.forecast, speech.previous) == (None, None, None)
+    _with_fed_statement(store)
+    assert check_times_against_fed(events, store) == {"compared": 1, "offsets_minutes": {0: 1}}
+
+
+def test_script_static_delimiters_are_balanced():
+    code = _code_only(_script())
+    for opening, closing in ("{}", "()", "[]"):
+        assert code.count(opening) == code.count(closing), f"{opening}{closing} non equilibres"
+    depth = 0
+    for ch in code:
+        depth += (ch == "{") - (ch == "}")
+        assert depth >= 0
+
+
+def test_script_static_uses_only_reviewed_calendar_api():
+    """Les fonctions et membres du calendrier utilises sont ceux relus dans la documentation
+    MQL5 le 2026-11-12. Ce test ne remplace pas une compilation."""
+    import re
+    code = _code_only(_script())
+    assert "#property strict" not in code                      # directive MQL4
+    calendar_calls = set(re.findall(r"\b(Calendar\w+)\s*\(", code))
+    assert calendar_calls == {"CalendarValueHistory", "CalendarEventById"}
+    members = set(re.findall(r"values\[i\]\.(\w+)", code)) | set(re.findall(r"\bev\.(\w+)", code))
+    assert members <= {"time", "event_id", "id", "impact_type", "HasActualValue", "GetActualValue",
+                       "HasForecastValue", "GetForecastValue", "HasPreviousValue", "GetPreviousValue",
+                       "HasRevisedValue", "GetRevisedValue", "digits", "time_mode", "importance",
+                       "name", "unit", "multiplier"}
+    functions = set(re.findall(r"(?<![.\w])([A-Z]\w+)\s*\(", code)) - calendar_calls   # hors methodes
+    assert functions <= {"OnStart", "ExportRange", "Clean", "StringReplace", "ResetLastError", "GetLastError",
+                         "PrintFormat", "Print", "TimeToString", "DoubleToString", "IntegerToString",
+                         "EnumToString", "FileOpen", "FileWriteString", "FileClose", "FileDelete",
+                         "TimeTradeServer", "TimeGMT", "MathRound", "MathMin", "TerminalInfoInteger",
+                         "IsStopped"}, functions
+
+
+def test_script_static_never_writes_a_default_for_a_missing_value():
+    code = _script()
+    for field in ("Actual", "Forecast", "Previous", "Revised"):
+        assert f'Has{field}Value()' in code and f'Get{field}Value()' in code
+    assert code.count(': "";') == 4                           # valeur absente -> champ vide

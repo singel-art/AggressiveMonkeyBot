@@ -12,7 +12,9 @@ Aucune clé ne doit apparaître dans le code, dans un fichier du projet ou dans 
 | Trading Economics | Non intégré | Abonnement payant | Calendrier avec prévisions | Sans objet |
 | CME Group | Non intégré | Offres payantes | Probabilités FedWatch | Sans objet |
 
-Aucune requête réelle n'a été faite avec une clé BLS valide : aucune n'est disponible. Le chemin avec clé est
+Aucune requête réelle n'a été faite avec une clé BLS valide : aucune n'a encore été fournie. Dans
+l'environnement cloud, la clé ne peut pas être injectée par les « secrets réseau », car le BLS l'attend dans le
+corps de la requête et non dans un en-tête : le test réel se fera sur votre PC, avec le fichier `.env`. Le chemin avec clé est
 couvert par des tests hors réseau (clé envoyée dans le corps de la requête, jamais dans l'URL ; refus pour clé
 invalide ou quota ; clé masquée dans les messages et dans l'archive). La réponse réelle du BLS à une clé
 invalide a été enregistrée pour ces tests.
