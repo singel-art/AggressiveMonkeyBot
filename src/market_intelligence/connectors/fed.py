@@ -129,7 +129,9 @@ def parse_speeches(text: str, since: date) -> list[Event]:
         # Le president de la Fed est repere par son titre, pas par son nom.
         importance = "high" if CHAIR_TITLE.match(speaker) else "medium"
         link = item.get("l") or item.get("stub") or ""
-        events.append(Event(event_key=f"fed_speech|{link or iso(when) + speaker}", source="fed",
+        events.append(Event(# Un meme texte peut etre prononce deux fois le meme jour : l'heure
+                            # fait partie de la cle pour ne perdre aucune intervention.
+                            event_key=f"fed_speech|{link or speaker}|{iso(when)}", source="fed",
                             kind="fed_speech", title=f"{speaker} : {htmllib.unescape(item['t'])}",
                             scheduled_at=iso(when), time_basis="published", importance=importance,
                             # Le flux ne liste un discours qu'une fois prononce : on ignore

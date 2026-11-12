@@ -5,30 +5,61 @@ fournit a la fois l'heure exacte, la prevision, la valeur publiee et la valeur
 precedente revisee. Il n'est lisible que depuis le terminal : le script
 mt5/Scripts/AMB_ExportCalendar.mq5 l'exporte en CSV, et ce module importe ce CSV.
 
-Format attendu (separateur ';', UTF-8, une ligne d'en-tete) :
-value_id;event_id;time_utc;currency;importance;name;actual;forecast;previous;revised_previous;unit;time_server
+Format attendu (separateur ';', UTF-8, une ligne d'en-tete, voir COLUMNS) :
+value_id;event_id;time_utc;time_server;utc_offset_s;time_mode;currency;importance;
+name;actual;forecast;previous;revised_previous;unit;impact
 
-`time_server` (heure du serveur de trading) est conserve pour pouvoir recontroler
-la conversion en UTC, notamment autour des changements d'heure.
+Regles de lecture :
+- `time_utc` est calcule par le script avec l'ecart serveur-UTC du jour de l'export.
+  Il peut etre faux d'une heure pour les dates d'une autre saison. `collect` recoupe
+  donc les decisions de la Fed avec les communiques dates de la Fed et signale tout
+  decalage au lieu de le corriger en silence.
+- Une heure n'est tenue pour publiee que si `time_mode` vaut
+  CALENDAR_TIMEMODE_DATETIME. Sinon elle est marquee 'estimated'.
+- Une valeur absente reste absente : aucun champ vide n'est converti en zero.
 
-Ce lecteur n'a pas encore ete valide sur un export reel : le script MQL5 ne peut
-etre compile et lance que sur votre poste.
+Etat : le script MQL5 n'a pas ete compile et aucun export reel n'a ete lu. Les
+tests de ce lecteur portent sur le format, pas sur un fichier produit par MT5.
 """
 from __future__ import annotations
 
 import csv
 import hashlib
-from datetime import date
+from collections import Counter
+from datetime import date, datetime
 from pathlib import Path
 
 from ..errors import ParseError
 from ..store import Event
-from ..timeutil import iso, now_utc, parse_iso
+from ..timeutil import UTC, iso, now_utc, parse_iso
 from .base import CheckResult, CollectReport, Connector
 
-COLUMNS = ["value_id", "event_id", "time_utc", "currency", "importance", "name",
-           "actual", "forecast", "previous", "revised_previous", "unit", "time_server"]
+COLUMNS = ["value_id", "event_id", "time_utc", "time_server", "utc_offset_s", "time_mode",
+           "currency", "importance", "name", "actual", "forecast", "previous",
+           "revised_previous", "unit", "impact"]
 IMPORTANCE = {"3": "high", "2": "medium", "1": "low", "0": "low"}
+EXACT_TIME = "CALENDAR_TIMEMODE_DATETIME"
+TIME_MODES = {EXACT_TIME, "CALENDAR_TIMEMODE_DATE", "CALENDAR_TIMEMODE_NOTIME",
+              "CALENDAR_TIMEMODE_TENTATIVE"}
+FED_DECISION_NAME = "Fed Interest Rate Decision"
+
+
+def _mt5_time(text: str, line: int) -> datetime:
+    try:
+        return datetime.strptime(text.strip(), "%Y.%m.%d %H:%M:%S").replace(tzinfo=UTC)
+    except ValueError as exc:
+        raise ParseError(f"ligne {line} : date illisible {text!r}") from exc
+
+
+def _number(text: str, line: int, field: str) -> str | None:
+    text = text.strip()
+    if not text:
+        return None
+    try:
+        float(text)
+    except ValueError as exc:
+        raise ParseError(f"ligne {line} : {field} non numerique {text!r}") from exc
+    return text
 
 
 def parse_calendar_csv(path: Path) -> list[Event]:
@@ -36,19 +67,54 @@ def parse_calendar_csv(path: Path) -> list[Event]:
         reader = csv.DictReader(handle, delimiter=";")
         if reader.fieldnames != COLUMNS:
             raise ParseError(f"colonnes inattendues dans {path.name} : {reader.fieldnames}")
-        events = []
-        for row in reader:
-            when = parse_iso(row["time_utc"].replace(" ", "T").replace(".", "-"))
-            unit = f" {row['unit']}" if row["unit"] else ""
+        events, seen = [], set()
+        for line, row in enumerate(reader, start=2):
+            if None in row or None in row.values():
+                raise ParseError(f"ligne {line} : nombre de colonnes incorrect")
+            if not row["value_id"].isdigit():
+                raise ParseError(f"ligne {line} : value_id invalide {row['value_id']!r}")
+            if row["value_id"] in seen:
+                raise ParseError(f"ligne {line} : value_id en double {row['value_id']}")
+            seen.add(row["value_id"])
+            if row["time_mode"] not in TIME_MODES:
+                raise ParseError(f"ligne {line} : time_mode inconnu {row['time_mode']!r}")
+            if row["importance"] not in IMPORTANCE:
+                raise ParseError(f"ligne {line} : importance inconnue {row['importance']!r}")
+            when = _mt5_time(row["time_utc"], line)
+            server = _mt5_time(row["time_server"], line)
+            try:
+                offset = int(row["utc_offset_s"])
+            except ValueError as exc:
+                raise ParseError(f"ligne {line} : utc_offset_s invalide") from exc
+            if (server - when).total_seconds() != offset:
+                raise ParseError(f"ligne {line} : time_utc, time_server et utc_offset_s incoherents")
+            values = {f: _number(row[f], line, f) for f in ("actual", "forecast", "previous", "revised_previous")}
+            unit = row["unit"].split("/")[0].replace("CALENDAR_UNIT_", "").lower()
+            suffix = f" [{unit}]" if unit and unit != "none" else ""
             events.append(Event(
                 event_key=f"mt5|{row['value_id']}", source="mt5_calendar", kind="data_release",
-                title=row["name"], scheduled_at=iso(when), time_basis="published",
-                importance=IMPORTANCE.get(row["importance"], "low"), currency=row["currency"] or None,
-                actual=(row["actual"] + unit) if row["actual"] else None,
-                forecast=(row["forecast"] + unit) if row["forecast"] else None,
-                previous=(row["previous"] + unit) if row["previous"] else None,
-                revised_previous=(row["revised_previous"] + unit) if row["revised_previous"] else None))
+                title=row["name"].strip(), scheduled_at=iso(when),
+                time_basis="published" if row["time_mode"] == EXACT_TIME else "estimated",
+                importance=IMPORTANCE[row["importance"]], currency=row["currency"] or None,
+                **{k: (v + suffix if v is not None else None) for k, v in values.items()}))
     return events
+
+
+def check_times_against_fed(events: list[Event], store) -> dict:
+    """Recoupe l'heure des decisions de la Fed de l'export avec l'heure reelle des
+    communiques du FOMC deja stockes (source : flux de la Fed, heure publiee).
+
+    Renvoie {'compared': n, 'offsets_minutes': {ecart: nombre}}. Un ecart non nul
+    (typiquement 60 ou -60) revele une conversion d'heure fausse dans l'export."""
+    statements = {r["scheduled_at"][:10]: parse_iso(r["scheduled_at"]) for r in store.db.execute(
+        "SELECT scheduled_at FROM events WHERE source='fed' AND kind='fomc_statement' "
+        "AND advance_notice='scheduled'")}
+    offsets: Counter = Counter()
+    for e in events:
+        day = e.scheduled_at[:10]
+        if e.title == FED_DECISION_NAME and day in statements:
+            offsets[round((parse_iso(e.scheduled_at) - statements[day]).total_seconds() / 60)] += 1
+    return {"compared": sum(offsets.values()), "offsets_minutes": dict(sorted(offsets.items()))}
 
 
 class Mt5CalendarConnector(Connector):
@@ -72,15 +138,30 @@ class Mt5CalendarConnector(Connector):
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
             try:
                 events = [e for e in parse_calendar_csv(path) if e.scheduled_at[:10] >= since.isoformat()]
-            except (ParseError, KeyError, ValueError) as exc:
-                report.errors.append(f"{path.name}: {exc}")
+            except ParseError as exc:
+                report.errors.append(f"{path.name}: {exc} ; fichier laisse en place, rien n'est importe")
                 continue
+            control = check_times_against_fed(events, self.store)
+            bad = {k: v for k, v in control["offsets_minutes"].items() if k != 0}
+            if bad:
+                report.errors.append(
+                    f"{path.name}: heures decalees par rapport aux communiques de la Fed "
+                    f"(ecart en minutes -> nombre : {bad}) ; fichier laisse en place, rien n'est importe")
+                continue
+            if control["compared"] == 0:
+                report.notes.append(f"{path.name}: heures non recoupees (aucune decision de la Fed "
+                                    "commune avec le stockage) ; a verifier a la main")
+            else:
+                report.notes.append(f"{path.name}: {control['compared']} decisions de la Fed recoupees, "
+                                    "heures identiques")
             target = self.settings.raw_dir / "mt5_calendar" / now.strftime("%Y/%m/%d") / f"{digest[:12]}_{path.name}"
             target.parent.mkdir(parents=True, exist_ok=True)
             path.replace(target)
-            self.store.log_fetch(source="mt5_calendar", url=f"depot manuel : {path.name}", fetched_at=iso(now),
-                                 status=200, sha256=digest, raw_path=str(target), error=None)
-            report.events_upserted += self.store.upsert_events(events, iso(now))
+            fetch_id = self.store.log_fetch(source="mt5_calendar", url=f"depot manuel : {path.name}",
+                                            fetched_at=iso(now), status=200, sha256=digest,
+                                            raw_path=str(target), error=None)
+            report.events_upserted += self.store.upsert_events(
+                [Event(**{**e.__dict__, "fetch_id": fetch_id}) for e in events], iso(now))
         if not report.events_upserted and not report.errors:
             report.notes.append("aucun export a importer")
         return report
