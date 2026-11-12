@@ -1,0 +1,4 @@
+# Coeur du module Market Intelligence : une seule dependance externe.
+requests>=2.31
+# Fuseaux horaires IANA : indispensable sous Windows (PC et VPS), inutile sous Linux.
+tzdata>=2024.1

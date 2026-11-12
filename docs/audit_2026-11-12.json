@@ -1,0 +1,53 @@
+{
+  "audited_at": "2026-11-12T09:06:13Z",
+  "results": [
+    {
+      "source": "fred",
+      "ok": true,
+      "detail": "fredgraph.csv sans cle, derniere DGS10 : 2026-11-09 = 4.88",
+      "needs_key": false
+    },
+    {
+      "source": "fed",
+      "ok": true,
+      "detail": "57 reunions FOMC lues, prochaine fin de reunion : 2026-12-09",
+      "needs_key": false
+    },
+    {
+      "source": "bls",
+      "ok": true,
+      "detail": "API v2 sans cle, dernier taux de chomage : 2026-10 = 4.1",
+      "needs_key": false
+    },
+    {
+      "source": "cftc",
+      "ok": true,
+      "detail": "rapport du 2026-11-03, position nette des gerants sur l'or : 103614 contrats",
+      "needs_key": false
+    },
+    {
+      "source": "wgc",
+      "ok": true,
+      "detail": "pages publiques lisibles ; fichiers de donnees reserves aux comptes connectes",
+      "needs_key": true
+    },
+    {
+      "source": "mt5_calendar",
+      "ok": false,
+      "detail": "aucun export depose : lancer le script AMB_ExportCalendar dans MT5 puis copier le CSV dans data/inbox/mt5_calendar/",
+      "needs_key": false
+    },
+    {
+      "source": "tradingeconomics",
+      "ok": false,
+      "detail": "HTTP 410 ; API payante : l'acces invite a ete supprime",
+      "needs_key": true
+    },
+    {
+      "source": "cme",
+      "ok": false,
+      "detail": "ProxyError ; collecte automatique interdite par les conditions d'utilisation du site",
+      "needs_key": true
+    }
+  ]
+}
