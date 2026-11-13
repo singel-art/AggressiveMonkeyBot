@@ -29,6 +29,8 @@ def test_pinned_versions_satisfy_pyproject_ranges():
     runtime, dev = _pins("requirements.txt"), _pins("requirements-dev.txt")
     for text in project["dependencies"]:
         req = Requirement(text)
+        if req.marker is not None and not req.marker.evaluate():
+            continue
         assert req.name.lower() in runtime, f"{req.name} absent de requirements.txt"
         assert runtime[req.name.lower()] in req.specifier
     everything = {**runtime, **dev}
