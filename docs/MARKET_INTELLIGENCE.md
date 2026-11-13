@@ -69,7 +69,7 @@ python -m pytest -q
 | Élément | État |
 | --- | --- |
 | Connecteurs FRED / ALFRED, Fed, CFTC | Testés sur les sources réelles le 12 novembre 2026, avant et après la fiabilisation |
-| Connecteur BLS | Sans clé : a fonctionné puis quota journalier atteint. Avec clé : testé hors réseau seulement |
+| Connecteur BLS | Sans clé : a fonctionné puis quota journalier atteint. Avec clé : validé en réel le 13 novembre 2026 (clé acceptée, 64 observations collectées). Recoupement FRED / BLS d'octobre 2026 : CPI (337,476), emploi (159 293) et chômage (4,1) concordent. Clé factice refusée, absence de clé = quota atteint |
 | Stockage point-in-time : publications initiales, révisions, borne sûre | Testé sur de vraies révisions, avec des tests anti-look-ahead dédiés |
 | Génération du contexte, en direct et à une date passée | Testée |
 | World Gold Council | Lecture de trois classeurs déposés à la main, sans réseau. Testée sur des classeurs fabriqués et lue en local sur les vrais fichiers |

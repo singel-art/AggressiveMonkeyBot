@@ -6,18 +6,24 @@ Aucune clé ne doit apparaître dans le code, dans un fichier du projet ou dans 
 
 | Clé ou compte | Statut | Coût | À quoi elle sert | Où la mettre |
 | --- | --- | --- | --- | --- |
-| `BLS_API_KEY` | Recommandée | Gratuite, sur inscription auprès du BLS | Quota journalier plus large sur l'API du BLS. Sans clé, le quota a été épuisé le jour de l'audit après quelques requêtes | Variable d'environnement |
+| `BLS_API_KEY` | Recommandée, validée le 13 novembre 2026 | Gratuite, sur inscription auprès du BLS | Quota journalier plus large sur l'API du BLS. Sans clé, le quota a été épuisé le jour de l'audit après quelques requêtes | Variable d'environnement |
 | `FRED_API_KEY` | Prévue, pas encore utilisée par le code | Gratuite, sur inscription auprès de la Fed de Saint-Louis | Accès à l'API officielle de FRED si les accès sans clé venaient à fermer | Variable d'environnement |
 | Compte Goldhub (World Gold Council) | Nécessaire pour les fichiers ETF et banques centrales | Gratuit | Télécharger les fichiers à la main, puis les déposer dans `data/inbox/wgc/` | Aucun identifiant dans le projet |
 | Trading Economics | Non intégré | Abonnement payant | Calendrier avec prévisions | Sans objet |
 | CME Group | Non intégré | Offres payantes | Probabilités FedWatch | Sans objet |
 
-Aucune requête réelle n'a été faite avec une clé BLS valide : aucune n'a encore été fournie. Dans
-l'environnement cloud, la clé ne peut pas être injectée par les « secrets réseau », car le BLS l'attend dans le
-corps de la requête et non dans un en-tête : le test réel se fera sur votre PC, avec le fichier `.env`. Le chemin avec clé est
-couvert par des tests hors réseau (clé envoyée dans le corps de la requête, jamais dans l'URL ; refus pour clé
-invalide ou quota ; clé masquée dans les messages et dans l'archive). La réponse réelle du BLS à une clé
-invalide a été enregistrée pour ces tests.
+Validation réelle du 13 novembre 2026 : la clé `BLS_API_KEY` fournie dans l'environnement cloud est **acceptée**
+par le BLS (API v2, clé envoyée dans le corps de la requête, champ `registrationkey`). La collecte
+`collect --only bls` a ajouté 64 observations et le recoupement FRED / BLS d'octobre 2026 est rempli (voir
+`docs/MARKET_INTELLIGENCE.md`). Trois essais comparés dans la même session : vraie clé, acceptée ; clé factice,
+« refusée par le BLS » ; aucune clé, « quota journalier atteint ». Le proxy de l'environnement n'injecte donc
+rien : c'est bien la clé de la variable d'environnement qui est utilisée. Le quota propre à cette clé n'a pas été
+mesuré.
+
+Dans l'environnement cloud, les « secrets réseau » de type corps de requête n'ont pas fonctionné (le proxy n'a rien
+injecté) ; la clé passe par la variable d'environnement. Le chemin avec clé reste aussi couvert par des tests hors
+réseau (clé envoyée dans le corps de la requête, jamais dans l'URL ; refus pour clé invalide ou quota ; clé masquée
+dans les messages et dans l'archive).
 
 ## Fichier `.env`
 
