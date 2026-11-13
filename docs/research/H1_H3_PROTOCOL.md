@@ -110,4 +110,14 @@ python -m amb_research.impulse_study --bars data/inbox/bars/amb_bars_XAUUSD_M1.c
 
 ## Écarts
 
-Aucun à ce jour.
+### Écart 1, 13 novembre 2026 : règle de conversion horaire imposée
+
+Avant tout calcul de résultat. Calibrage automatique sur les 44 publications de l'emploi américain de
+l'historique complet : meilleure règle `utc+2/+3_heure_ete_UE`, 88,6 % d'accord, donc refusée par le seuil de
+90 %. Les 5 désaccords datent tous de 2025-2026 et donnent des écarts impossibles pour un serveur (-6 h,
+-3,5 h, +2,5 h, et deux cas de ±1 h, jours de publication décalée ou autre événement plus ample) : la
+détection par « bougie la plus ample » a pris une autre bougie. Sur la seule période de développement
+(2023-2024), 23 publications : règle UE 23/23 (100 %), règle US 21/23 (91,3 %), UTC+2 fixe 43,5 %,
+UTC+3 fixe 56,5 %. La règle est donc imposée avec `--offset-rule utc+2/+3_heure_ete_UE`. Seuls des
+horodatages ont été examinés pour ce choix, aucune statistique de prix ni de performance. Le seuil de 90 %
+et le reste du protocole ne changent pas.
