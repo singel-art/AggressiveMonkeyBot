@@ -1,8 +1,7 @@
 # Protocole des règles d'entrée H4 à H6
 
-**Statut : PROPOSITION du 13 novembre 2026. Pas encore figé, rien n'a été mesuré.**
-Il sera figé à la validation de l'utilisateur, puis ne se modifiera plus. Toute déviation sera notée dans
-« Écarts ».
+**Statut : FIGÉ le 13 novembre 2026, après validation de l'utilisateur et avant toute mesure.**
+Il ne se modifie plus. Toute déviation est notée dans « Écarts ».
 
 ## Ce qui est déjà connu au moment d'écrire
 
@@ -24,6 +23,21 @@ C'est la validation sur 2025, jamais regardée, qui tranchera.
 | Même bougie | Si stop et objectif sont touchés dans la même bougie M1, le stop est compté |
 | Filtres | Pas d'entrée si `spread_ratio` > 2, ni de 30 minutes avant à 5 minutes après une annonce majeure |
 | Coût | Spread de la bougie d'entrée ou de sortie. Ni commission ni slippage à ce stade |
+
+## Précisions d'exécution, fixées avant la mesure
+
+- Les niveaux de stop et d'objectif sont posés à partir du prix d'ouverture (bid) de la bougie d'entrée.
+- Si une bougie ouvre au-delà du stop (trou de cotation), la sortie se fait à ce prix d'ouverture, plus
+  défavorable. Un objectif dépassé par un trou est compté au niveau de l'objectif, pas mieux.
+- Durée maximale : sortie à la clôture de la première bougie M1 qui atteint la durée ; si le marché était
+  fermé entre-temps, sortie à l'ouverture suivante.
+- Pas d'entrée si la bougie qui suit le signal ouvre plus de 5 minutes après lui (fermeture du marché).
+- Un nouveau signal n'est accepté qu'à partir de la bougie de sortie du trade précédent.
+- Un trade encore ouvert à la fin de la période n'est pas compté.
+- « Au cours des 30 dernières minutes » (H4) : les 30 dernières bougies M1, bougie du signal comprise.
+- H5 : seule compte la première clôture de la journée au-delà de chaque borne, entre 08h00 et 11h00 heure de
+  Londres. Si les filtres la refusent, il n'y a pas d'entrée de ce côté ce jour-là.
+- Les moitiés de période sont coupées au milieu du calendrier (1er janvier 2024 pour le développement).
 
 ## Les trois règles
 
