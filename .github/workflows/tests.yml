@@ -2,7 +2,7 @@ name: tests
 
 on:
   push:
-    branches: [main, "integration/**", "hardening/**"]
+    branches: [main, "integration/**", "hardening/**", "research/**"]
   pull_request:
 
 permissions:

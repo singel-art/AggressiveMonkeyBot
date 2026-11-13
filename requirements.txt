@@ -13,5 +13,8 @@ urllib3==2.8.0
 # Lecture des classeurs World Gold Council (extra "wgc" de pyproject.toml)
 openpyxl==3.1.5
 et_xmlfile==2.0.0
+# Etudes statistiques (extra "research" de pyproject.toml)
+numpy==2.5.4 ; python_version >= "3.12"
+numpy==2.4.6 ; python_version < "3.12"   # numpy 2.5 exige Python 3.12
 # Fuseaux horaires IANA : necessaire sous Windows seulement (non teste localement, verifie par l'integration continue).
 tzdata==2026.6 ; platform_system == "Windows"
