@@ -1,8 +1,7 @@
 # Protocole des règles H11 et H12 — l'or face au dollar
 
-**Statut : PROPOSITION du 13 novembre 2026. Pas encore figé. Les données du dollar n'ont pas été reçues :
-rien n'a été vu, rien n'a été mesuré.** Il sera figé à la validation de l'utilisateur, avant l'ouverture des
-fichiers EURUSD et USDJPY.
+**Statut : FIGÉ le 13 novembre 2026, après validation de l'utilisateur, avant réception des fichiers EURUSD
+et USDJPY.** Rien n'a été vu ni mesuré. Il ne se modifie plus. Toute déviation est notée dans « Écarts ».
 
 ## Pourquoi
 
