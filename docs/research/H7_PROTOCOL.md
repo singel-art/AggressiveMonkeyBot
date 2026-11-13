@@ -1,7 +1,11 @@
 # Protocole de la règle H7 — dérive après annonce
 
-**Statut : PROPOSITION du 13 novembre 2026. Pas encore figé, rien n'a été mesuré.**
-Il sera figé à la validation de l'utilisateur, puis ne se modifiera plus.
+**Statut : FIGÉ le 13 novembre 2026, après validation de l'utilisateur et avant toute mesure.**
+Il ne se modifie plus. Toute déviation est notée dans « Écarts ».
+
+Précisions fixées avant la mesure : la bougie de réaction doit ouvrir exactement à la minute de l'annonce,
+sinon il n'y a pas de signal ; si la bougie d'entrée ouvre déjà au-delà du stop, il n'y a pas d'entrée ;
+identifiants MT5 des annonces : 840030016, 840030005, 840030001, 840020010, 840010007, 840040001, 840050014.
 
 ## Origine de l'idée
 
