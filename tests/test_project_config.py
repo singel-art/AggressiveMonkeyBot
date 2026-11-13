@@ -16,6 +16,8 @@ def _pins(name):
         line = line.split("#")[0].strip()
         if line and not line.startswith("-r"):
             req = Requirement(line)
+            if req.marker is not None and not req.marker.evaluate():
+                continue                      # epinglage reserve a une autre version de Python ou a un autre systeme
             (spec,) = req.specifier
             assert spec.operator == "==", f"{name} : {line} n'est pas epingle"
             pins[req.name.lower()] = Version(spec.version)
