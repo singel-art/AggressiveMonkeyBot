@@ -7,5 +7,7 @@ Bot de trading algorithmique sur XAUUSD avec MT5. Combine scalping M1, analyse t
 - `docs/MARKET_INTELLIGENCE.md` : module de collecte des données macroéconomiques (Python), avec son état réel.
 - `docs/research/H1_H3_PROTOCOL.md` : protocole de l'étude statistique des impulsions M1, figé avant toute donnée.
 - `docs/research/H1_H3_PROTOCOL.md` : étude des impulsions M1. Résultat sur 2023-2024 : 0 configuration sur 36 ne passe le critère ; cette entrée est écartée.
+- `docs/research/H4_H6_PROTOCOL.md` : trois règles d'entrée (repli dans la tendance, cassure du range asiatique, retour après excès). Résultat sur 2023-2024 : 0 configuration sur 12 ne passe le critère.
+- `docs/research/H7_PROTOCOL.md` : dérive après annonce. Résultat sur 2023-2024 : 0 configuration sur 6 ne passe le critère (gain moyen non distinguable de zéro).
 - `docs/TECHNICAL_LAYER.md` : couche technique (tendance, structure, volatilité, momentum, sessions, niveaux). Elle mesure, sans règle de trading.
 - Le robot de trading (Expert Advisor MQL5) n'est pas encore développé.
