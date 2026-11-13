@@ -30,7 +30,7 @@ def test_pinned_versions_satisfy_pyproject_ranges():
         assert req.name.lower() in runtime, f"{req.name} absent de requirements.txt"
         assert runtime[req.name.lower()] in req.specifier
     everything = {**runtime, **dev}
-    for extra in ("dev", "wgc"):
+    for extra in ("dev", "wgc", "research"):
         for text in project["optional-dependencies"][extra]:
             req = Requirement(text)
             assert everything[req.name.lower()] in req.specifier
